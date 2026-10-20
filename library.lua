@@ -32,8 +32,9 @@ end
 local function row_height(spec)
     local kind = spec[1]
     return kind == "slider" and 27 or (kind == "combo" or kind == "multi") and 33
-        or kind == "input" and 36 or kind == "button" and 16
-        or kind == "section" and 15 or kind == "sep" and 7 or 14
+        or kind == "input" and 36 or kind == "button" and 20
+        or kind == "section" and 15 or kind == "sep" and 7
+        or (kind == "toggle" or kind == "keytoggle" or kind == "color") and 16 or 14
 end
 
 local function new_indicator(library, data)
@@ -219,6 +220,8 @@ local function create_library(options)
                 self.mode = nextMode == "hold" and "hold" or nextMode == "always" and "always" or "toggle"
                 local display = self.mode == "hold" and "Hold" or self.mode == "always" and "Always" or "Toggle"
                 if library.Api and library.Api:Has(self.modeFlag) then library.Api:Set(self.modeFlag, display) end
+                if self.mode == "always" then self:_fire(true)
+                elseif self.state then self:_fire(false) end
             end
             function bind:_fire(value)
                 if self.state == value then return end
@@ -306,7 +309,9 @@ local function create_library(options)
     function sectionMethods:AddButton(data)
         if type(data) == "string" then data = { text = data } end
         local spec = { "button", tostring(data.text or "Button"), nil,
-            action = type(data.callback) == "function" and data.callback or function() end }
+            action = type(data.callback) == "function" and data.callback or function() end,
+            confirm = data.confirm == true, confirmText = data.confirmText,
+            style = data.style }
         self.Rows[#self.Rows + 1] = spec
         return { class = "button", callback = data.callback, Spec = spec }
     end
@@ -363,12 +368,21 @@ local function create_library(options)
             if bind then
                 bind.bind = key_item(value)
                 bind.changedAt = os.clock()
+                local name = key_name(value)
+                if name == "None" and bind.state then bind:_fire(false) end
+                if bind.flag == "menu_keybind" then
+                    local menuKey = name == "None" and "Insert" or name
+                    self.Defaults.menu_key = menuKey
+                    if api:Has("menu_key") then api:Set("menu_key", menuKey) end
+                end
                 if bind.keycallback then bind.keycallback(bind.bind) end
                 return
             end
             bind = self.BindModes[key]
             if bind then
                 bind.mode = tostring(value):lower()
+                if bind.mode == "always" then bind:_fire(true)
+                elseif bind.state then bind:_fire(false) end
                 return
             end
             if key:sub(1, 6) == "color:" then
@@ -394,14 +408,14 @@ local function create_library(options)
             self.Suppress[key] = nil
             if not silent and option.callback then option.callback(value) end
         end)
-        self.Connections[#self.Connections + 1] = UserInputService.InputBegan:Connect(function(input, processed)
-            if processed then return end
+        self.Connections[#self.Connections + 1] = UserInputService.InputBegan:Connect(function(input)
+            if UserInputService:GetFocusedTextBox() then return end
             local name = input_name(input)
             for _, option in pairs(self.options) do
                 if option.class == "bind" and key_name(option.bind) == name then
                     if os.clock() - (option.changedAt or 0) < 0.05 then continue end
                     if option.mode == "hold" then option:_fire(true)
-                    else option:_fire(not option.state) end
+                    elseif option.mode == "toggle" then option:_fire(not option.state) end
                 end
             end
         end)
@@ -413,6 +427,9 @@ local function create_library(options)
                 end
             end
         end)
+        for _, option in pairs(self.options) do
+            if option.class == "bind" and option.mode == "always" then option:_fire(true) end
+        end
     end
 
     function library:Attach(menu)

@@ -186,13 +186,20 @@ local function button(parent, text, x, y, w, h, bright)
     local b = new("TextButton", parent, { Name = "Button", Text = text, Position = px(x, y), Size = px(w, h),
         AutoButtonColor = false, BackgroundColor3 = T.fieldTop, BorderSizePixel = 0,
         Font = Enum.Font.Arial, TextSize = h <= 12 and 10 or 13,
-        TextColor3 = bright and T.text or T.dim })
+        TextColor3 = bright and T.text or T.dim, TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true })
     -- The native control surface runs from field_top to field at its lower edge.
     gradient(b, Color3.new(1, 1, 1), Color3.fromRGB(142, 149, 149), 90, true)
-    stroke(b, T.borderDark)
-    conn(b.MouseEnter, function() tween(b, { BackgroundColor3 = T.hover, TextColor3 = T.text }, 22) end)
-    conn(b.MouseLeave, function() tween(b, { BackgroundColor3 = T.fieldTop,
-        TextColor3 = bright and T.text or T.dim }, 22) end)
+    local outline = stroke(b, T.borderDark)
+    conn(b.MouseEnter, function()
+        tween(b, { BackgroundColor3 = T.hover, TextColor3 = T.text }, 22)
+        tween(outline, { Color = C.accent:Lerp(T.borderDark, 0.55) }, 22)
+    end)
+    conn(b.MouseLeave, function()
+        tween(b, { BackgroundColor3 = T.fieldTop,
+            TextColor3 = bright and T.text or T.dim }, 22)
+        tween(outline, { Color = T.borderDark }, 22)
+    end)
     return b
 end
 
@@ -669,8 +676,16 @@ end
 conn(UserInputService.InputBegan, function(input)
     if not popup or (input.UserInputType ~= Enum.UserInputType.MouseButton1
         and input.UserInputType ~= Enum.UserInputType.Touch) then return end
-    local p, sz = popup.AbsolutePosition, popup.AbsoluteSize
     local m = input.Position
+    if popupAnchor and popupAnchor.Parent then
+        local anchorPosition, anchorSize = popupAnchor.AbsolutePosition, popupAnchor.AbsoluteSize
+        if m.X >= anchorPosition.X and m.Y >= anchorPosition.Y
+            and m.X <= anchorPosition.X + anchorSize.X
+            and m.Y <= anchorPosition.Y + anchorSize.Y then
+            return
+        end
+    end
+    local p, sz = popup.AbsolutePosition, popup.AbsoluteSize
     if m.X < p.X or m.Y < p.Y or m.X > p.X + sz.X or m.Y > p.Y + sz.Y then close_popup() end
 end)
 
@@ -701,9 +716,10 @@ conn(UserInputService.InputBegan, function(input, processed)
     if captureButton then
         local key = input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name
             or input.UserInputType.Name
-        if key == "Escape" then key = "None" end
+        if key == "Escape" or key == "Backspace" then key = "None" end
         Api:Set(captureButton.key, key)
-        captureButton.button.Text = short_key(key)
+        if captureButton.update then captureButton.update(key)
+        elseif captureButton.button.Parent then captureButton.button.Text = short_key(key) end
         captureButton = nil
         return
     end
@@ -1099,8 +1115,8 @@ local function add_control(body, spec)
         local r = row(body, 14, text)
         label(r, text, 1, 0, 270, 14, T.dim, 11)
     elseif kind == "toggle" or kind == "keytoggle" then
-        local r = row(body, 14, key)
-        local check = new("TextButton", r, { Name = key, Text = "", Position = px(0, 2), Size = px(10, 10),
+        local r = row(body, 16, key)
+        local check = new("TextButton", r, { Name = key, Text = "", Position = px(0, 3), Size = px(10, 10),
             AutoButtonColor = false, BackgroundColor3 = T.borderDark,
             BorderSizePixel = 0, Active = true })
         local checkSurface = frame(check, 1, 1, 8, 8, T.fieldTop, "CheckSurface")
@@ -1108,10 +1124,10 @@ local function add_control(body, spec)
         local checkFill = frame(check, 1, 1, 8, 8, C.accent_secondary, "CheckFill")
         gradient(checkFill, C.accent_secondary, C.accent)
         checkFill.BackgroundTransparency = S[key] and 0 or 1
-        local hit = new("TextButton", r, { Name = "Hit", Text = text, Position = px(14, 0),
+        local hit = new("TextButton", r, { Name = "Hit", Text = text, Position = px(14, 1),
             Size = UDim2.new(1, -14, 0, 14), BackgroundTransparency = 1, BorderSizePixel = 0,
             Font = Enum.Font.Arial, TextColor3 = S[key] and T.text or T.dim, TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left })
+            TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd })
         local function hover_text(hovered)
             if spec.color then return end
             tween(hit, { TextColor3 = (hovered or S[key]) and T.text or T.dim }, 20)
@@ -1132,19 +1148,27 @@ local function add_control(body, spec)
         end)
         if kind == "keytoggle" then
             local keyText = short_key(S[spec.bind])
-            local keyWidth = math.clamp(#keyText * 6 + 8, 32, 72)
-            local keyButton = button(r, keyText, 0, 1, keyWidth, 11)
-            keyButton.Position = UDim2.new(1, -keyWidth, 0, 1)
+            local keyWidth = math.clamp(#keyText * 7 + 10, 38, 96)
+            local keyButton = button(r, keyText, 0, 1, keyWidth, 14)
             keyButton.Name = "Keybind"
-            hit.Size = UDim2.new(1, -17 - keyWidth, 0, 14)
+            local function update_key(value)
+                if not keyButton.Parent then return end
+                local valueText = short_key(value)
+                local width = math.clamp(#valueText * 7 + 10, 38, 96)
+                keyButton.Text = valueText
+                keyButton.Position = UDim2.new(1, -width, 0, 1)
+                keyButton.Size = px(width, 14)
+                hit.Size = UDim2.new(1, -17 - width, 0, 14)
+            end
+            update_key(S[spec.bind])
             conn(keyButton.MouseButton1Click, function()
                 keyButton.Text = "..."
-                captureButton = { key = spec.bind, button = keyButton }
+                captureButton = { key = spec.bind, button = keyButton, update = update_key }
             end)
             conn(keyButton.MouseButton2Click, function()
                 popup_list(keyButton, { "Toggle", "Hold", "Always" }, S[spec.mode], function(choice)
                     set(spec.mode, choice)
-                end, 68)
+                end, 76)
             end)
         elseif spec.color then
             add_color_controls(r, spec.color, nil, spec.advanced)
@@ -1159,10 +1183,10 @@ local function add_control(body, spec)
         gradient(track, T.fieldTop, T.field)
         field_track_top_line(track)
         local fillBar = slider_surface(track)
-        local display = label(track, "", 0, 0, 1, 10, T.text, 11, Enum.TextXAlignment.Center)
-        display.Size = fill()
+        local display = label(r, "", 0, 14, 1, 12, T.text, 12, Enum.TextXAlignment.Center)
+        display.Size = UDim2.new(1, 0, 0, 12)
         display.TextTransparency = 1
-        display.ZIndex = track.ZIndex + 2
+        display.ZIndex = track.ZIndex + 5
         local min, max = spec.min, spec.max
         local initialized = false
         local function fmt(value)
@@ -1234,13 +1258,37 @@ local function add_control(body, spec)
             hover(true)
         end)
     elseif kind == "button" then
-        local r = row(body, 16, text)
+        local r = row(body, 20, text)
         local b = button(r, text, 0, 1, 273, 16, true)
         b.Size = UDim2.new(1, 0, 0, 16)
-        conn(b.MouseButton1Click, spec.action)
+        local armedUntil = 0
+        local armToken = 0
+        local function restore_button()
+            if not b.Parent then return end
+            b.Text = text
+            tween(b, { TextColor3 = T.text }, S.section_fade_speed)
+        end
+        conn(b.MouseButton1Click, function()
+            local now = os.clock()
+            if spec.confirm and now > armedUntil then
+                armedUntil = now + 1.8
+                armToken += 1
+                local token = armToken
+                b.Text = spec.confirmText or "Click again to confirm"
+                tween(b, { TextColor3 = C.accent_secondary }, S.section_fade_speed)
+                task.delay(1.8, function()
+                    if token == armToken and os.clock() >= armedUntil then restore_button() end
+                end)
+                return
+            end
+            armedUntil = 0
+            armToken += 1
+            restore_button()
+            spec.action()
+        end)
     elseif kind == "color" then
-        local r = row(body, 14, key)
-        label(r, text, 0, 0, 245, 14, T.dim, 13)
+        local r = row(body, 16, key)
+        label(r, text, 0, 1, 245, 14, T.dim, 13)
         add_color_controls(r, key, spec.secondary, spec.advanced)
     elseif kind == "input" then
         local r = row(body, 36, key)
@@ -1522,7 +1570,11 @@ local function render_tab(name)
             local x = section.x == 0 and 4 or section.x
             local _, body = panel(panelParent, section.title, x, section.y, 301, section.h)
             for _, spec in ipairs(section.rows) do
-                if (not spec.when or spec.when(S)) and spec[3] then shownKeys[spec[3]] = true end
+                if not spec.when or spec.when(S) then
+                    if spec[3] then shownKeys[spec[3]] = true end
+                    if spec.bind then shownKeys[spec.bind] = true end
+                    if spec.mode then shownKeys[spec.mode] = true end
+                end
                 add_control(body, spec)
             end
         end
