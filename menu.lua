@@ -1163,23 +1163,17 @@ local function add_color_controls(parent, colorKey, secondKey, allowAdvanced)
 end
 
 local function toggle_surface(parent, key, enabled)
-    local check = new("TextButton", parent, { Name = key, Text = "", Position = px(0, 3),
+    local check = new("TextButton", parent, { Name = key, Text = "", Position = px(2, 3),
         Size = px(10, 10), AutoButtonColor = false, BackgroundColor3 = T.fieldTop,
         BorderSizePixel = 0, Active = true })
     gradient(check, T.fieldTop, T.field)
-    local outline = stroke(check, T.borderDark)
+    stroke(check, T.borderDark)
     local top = frame(check, 1, 1, 8, 1, T.border, "TopHighlight")
     top.ZIndex = check.ZIndex + 1
     local checkFill = frame(check, 1, 1, 8, 8, C.accent_secondary, "CheckFill")
     checkFill.ZIndex = check.ZIndex + 2
     gradient(checkFill, C.accent_secondary, C.accent)
     checkFill.BackgroundTransparency = enabled and 0 or 1
-    conn(check.MouseEnter, function()
-        tween(outline, { Color = C.accent }, S.section_fade_speed)
-    end)
-    conn(check.MouseLeave, function()
-        tween(outline, { Color = T.borderDark }, S.section_fade_speed)
-    end)
     return check, checkFill
 end
 
@@ -1199,12 +1193,11 @@ local function add_control(body, spec)
     elseif kind == "toggle" or kind == "keytoggle" then
         local r = row(body, 16, key)
         local check, checkFill = toggle_surface(r, key, S[key])
-        local hit = new("TextButton", r, { Name = "Hit", Text = text, Position = px(14, 1),
-            Size = UDim2.new(1, -14, 0, 14), BackgroundTransparency = 1, BorderSizePixel = 0,
+        local hit = new("TextButton", r, { Name = "Hit", Text = text, Position = px(16, 1),
+            Size = UDim2.new(1, -16, 0, 14), BackgroundTransparency = 1, BorderSizePixel = 0,
             Font = Enum.Font.Arial, TextColor3 = S[key] and T.text or T.dim, TextSize = 13,
             TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd })
         local function hover_text(hovered)
-            if spec.color then return end
             tween(hit, { TextColor3 = (hovered or S[key]) and T.text or T.dim }, 20)
         end
         conn(hit.MouseEnter, function() hover_text(true) end)
@@ -1231,9 +1224,9 @@ local function add_control(body, spec)
                 local valueText = short_key(value)
                 local width = math.clamp(#valueText * 7 + 10, 38, 96)
                 keyButton.Text = valueText
-                keyButton.Position = UDim2.new(1, -width, 0, 1)
+                keyButton.Position = UDim2.new(1, -width - 2, 0, 1)
                 keyButton.Size = px(width, 14)
-                hit.Size = UDim2.new(1, -17 - width, 0, 14)
+                hit.Size = UDim2.new(1, -21 - width, 0, 14)
             end
             update_key(S[spec.bind])
             conn(keyButton.MouseButton1Click, function()
@@ -1368,7 +1361,7 @@ local function add_control(body, spec)
     elseif kind == "input" then
         local r = row(body, 36, key)
         label(r, text, 0, 0, 273, 15, T.dim, 13)
-        local box = new("TextBox", r, { Name = key, Position = px(0, 17), Size = px(273, 17),
+        local box = new("TextBox", r, { Name = key, Position = px(0, 17), Size = UDim2.new(1, 0, 0, 17),
             BackgroundColor3 = T.fieldTop, BorderSizePixel = 0, ClearTextOnFocus = false,
             Text = S[key], Font = Enum.Font.Arial, TextSize = 11, TextColor3 = T.text,
             PlaceholderText = text })
@@ -1830,23 +1823,53 @@ conn(Players.PlayerRemoving, refresh_players)
 refresh_players()
 
 local config = detached("Config", 302, 340, math.max(8, viewport.Y - 341), 217)
+do
+    local view = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or viewport
+    local menuWidth, configWidth, gap = 644, 302, 7
+    local combinedWidth = menuWidth + gap + configWidth
+    local guiOffset = main.AbsolutePosition
+        - Vector2.new(main.Position.X.Offset, main.Position.Y.Offset)
+    local x = math.max(4, math.floor((view.X - combinedWidth) * 0.5 + 0.5))
+    local y = math.max(4, math.floor((view.Y - 668) * 0.5 + 0.5))
+    if combinedWidth > view.X - 8 then
+        x = math.max(4, math.floor((view.X - menuWidth) * 0.5 + 0.5))
+    end
+    local configX = math.clamp(x + menuWidth + gap, 4,
+        math.max(4, view.X - configWidth - 4))
+    main.Position = px(x - guiOffset.X, y - guiOffset.Y)
+    config.Position = px(configX - guiOffset.X, y - guiOffset.Y)
+end
 local configBar = frame(config, 8, 7, 286, 22, T.fieldTop, "TitleBar")
+gradient(configBar, T.fieldTop, T.field)
 stroke(configBar, T.borderDark)
-label(configBar, "Config", 0, 0, 286, 22, T.text, 12, Enum.TextXAlignment.Center)
+local configBarInset = frame(configBar, 1, 1, 284, 20, T.fieldTop, "InnerBorder")
+configBarInset.BackgroundTransparency = 1
+stroke(configBarInset, T.border)
+frame(configBar, 1, 1, 284, 1, T.bevelInner, "TopHighlight")
+gloss(configBar, 3, 2, 280, function() return S.shine_speed end)
+local configAccentLine = frame(configBar, 0, 21, 286, 1, C.accent, "AccentLine")
+configAccentLine.BackgroundTransparency = 1 - 78 / 255
+label(configBar, "Config", 0, 0, 286, 22, T.text, 12,
+    Enum.TextXAlignment.Center).ZIndex = 7
 make_draggable(config, configBar)
 local search = new("TextBox", config, { Name = "ConfigSearch", Position = px(13, 38), Size = px(276, 18),
     BackgroundColor3 = T.fieldTop, BorderSizePixel = 0, ClearTextOnFocus = false,
     PlaceholderText = "search or new config", Text = "", Font = Enum.Font.Arial,
-    TextSize = 12, TextColor3 = T.text })
+    TextSize = 12, TextColor3 = T.text, PlaceholderColor3 = T.dim,
+    TextXAlignment = Enum.TextXAlignment.Left })
 stroke(search, T.borderDark)
+field_track_top_line(search)
+new("UIPadding", search, { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) })
 local configList = new("ScrollingFrame", config, { Name = "ConfigList", Position = px(13, 60), Size = px(276, 204),
     BackgroundColor3 = T.panelAlt, BorderSizePixel = 0, ScrollBarThickness = 5,
     ScrollBarImageColor3 = C.accent_secondary, AutomaticCanvasSize = Enum.AutomaticSize.Y,
     CanvasSize = px(0, 0) })
+gradient(configList, T.panelAlt, T.panel)
 stroke(configList, T.border)
 new("UIListLayout", configList, { Padding = UDim.new(0, 1), SortOrder = Enum.SortOrder.Name })
+new("UIPadding", configList, { PaddingLeft = UDim.new(0, 3), PaddingTop = UDim.new(0, 4),
+    PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 4) })
 local selectedConfig
-local lastConfigClick, lastConfigName = 0, nil
 local status = "ready"
 local function refresh_configs()
     for _, child in ipairs(configList:GetChildren()) do if child:IsA("TextButton") or child:IsA("TextLabel") then child:Destroy() end end
@@ -1856,20 +1879,38 @@ local function refresh_configs()
     for _, name in ipairs(names) do
         if query == "" or string.find(string.lower(name), query, 1, true) then
             count += 1
-            local b = button(configList, name .. (Api.LoadedConfig == name and "  (loaded)" or ""),
-                0, 0, 271, 16, selectedConfig == name)
+            local selected = selectedConfig == name
+            local b = new("TextButton", configList, { Text = "", Size = UDim2.new(1, 0, 0, 16),
+                BackgroundTransparency = 1, BorderSizePixel = 0, AutoButtonColor = false })
             b.Name = name
-            b.Size = UDim2.new(1, -5, 0, 16)
-            b.TextXAlignment = Enum.TextXAlignment.Left
+            local hover = frame(b, 0, 0, 1, 16, T.hover, "Hover")
+            hover.Size = fill()
+            hover.Visible = false
+            local selection = frame(b, 0, 0, 1, 16, C.accent, "Selection")
+            selection.Size = fill()
+            selection.Visible = selected
+            local selectionFade = gradient(selection, C.accent, C.accent, 0)
+            selectionFade.Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1 - 56 / 255),
+                NumberSequenceKeypoint.new(0.5, 1),
+                NumberSequenceKeypoint.new(1, 1 - 56 / 255),
+            })
+            local selectionOutline = stroke(b, C.accent)
+            selectionOutline.Transparency = selected and 1 - 150 / 255 or 1
+            local nameLabel = label(b, name, 5, 0, 1, 16, T.text, 12)
+            nameLabel.Size = UDim2.new(1, -10, 1, 0)
+            nameLabel.ZIndex = b.ZIndex + 2
+            if Api.LoadedConfig == name then
+                local loadedLabel = label(b, "(loaded)", 0, 0, 65, 16, C.accent_secondary, 12,
+                    Enum.TextXAlignment.Right)
+                loadedLabel.Position = UDim2.new(1, -70, 0, 0)
+                loadedLabel.ZIndex = nameLabel.ZIndex
+                nameLabel.Size = UDim2.new(1, -78, 1, 0)
+            end
+            conn(b.MouseEnter, function() if not selected then hover.Visible = true end end)
+            conn(b.MouseLeave, function() hover.Visible = false end)
             conn(b.MouseButton1Click, function()
-                local now = os.clock()
-                if lastConfigName == name and now - lastConfigClick < 0.35 then
-                    local ok, err = Menu:LoadConfig(name)
-                    status = ok and ("loaded " .. name) or tostring(err)
-                else
-                    selectedConfig = name
-                end
-                lastConfigClick, lastConfigName = now, name
+                selectedConfig = name
                 refresh_configs()
             end)
         end
@@ -1903,10 +1944,11 @@ action_button("Delete", 13, 288, 136, function()
     return ok, err
 end)
 action_button("Refresh", 153, 288, 136, function() return true end)
-action_button("Open File", 13, 308, 276, function()
-    if type(setclipboard) ~= "function" then return false, "clipboard unavailable" end
-    setclipboard(Api.ConfigDirectory)
-    return true, "config path copied"
+action_button("Load", 13, 308, 276, function()
+    local name = selectedConfig or (search.Text ~= "" and search.Text or nil)
+    local ok, err = Menu:LoadConfig(name)
+    if ok then selectedConfig = name end
+    return ok, err
 end)
 refresh_configs()
 
