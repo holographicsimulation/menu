@@ -159,17 +159,11 @@ local Menu = { Api = Api, State = S, Colors = C, Connections = {}, ColorSwatches
 Environment.__SenseLuaMenu = Menu
 Environment.SenseMenuApi = Api
 
-local savedMouseBehavior
-local savedMouseIconEnabled
 local mouseReleased = false
 local mouseBindingName = "SenseLuaMenuMouse"
 
 local function release_mouse_for_menu()
-    if not mouseReleased then
-        savedMouseBehavior = UserInputService.MouseBehavior
-        savedMouseIconEnabled = UserInputService.MouseIconEnabled
-        mouseReleased = true
-    end
+    mouseReleased = true
     UserInputService.MouseBehavior = Enum.MouseBehavior.Default
     UserInputService.MouseIconEnabled = true
 end
@@ -177,8 +171,13 @@ end
 local function restore_game_mouse()
     if not mouseReleased then return end
     mouseReleased = false
-    UserInputService.MouseBehavior = savedMouseBehavior or Enum.MouseBehavior.Default
-    UserInputService.MouseIconEnabled = savedMouseIconEnabled ~= false
+    -- A menu can be loaded while Roblox temporarily has the cursor locked
+    -- (camera drag, first person, Shift Lock, or a previous menu instance).
+    -- Restoring that captured value can leave the cursor permanently centered.
+    -- Release it here and let Roblox's camera controller request a fresh lock
+    -- on its next update only when the current game state actually needs one.
+    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    UserInputService.MouseIconEnabled = true
 end
 
 pcall(function()
