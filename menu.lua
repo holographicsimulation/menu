@@ -9,6 +9,27 @@ if Environment.__SenseLuaMenu and type(Environment.__SenseLuaMenu.Destroy) == "f
     pcall(function() Environment.__SenseLuaMenu:Destroy() end)
 end
 
+-- A failed or interrupted reload can lose the Lua controller while leaving its
+-- ScreenGui behind. Remove every orphaned Sense overlay before constructing the
+-- replacement so detached window strokes cannot accumulate on the game view.
+do
+    local seen = {}
+    local roots = { game:GetService("CoreGui") }
+    pcall(function()
+        if type(gethui) == "function" then roots[#roots + 1] = gethui() end
+    end)
+    for _, root in ipairs(roots) do
+        if root and not seen[root] then
+            seen[root] = true
+            for _, object in ipairs(root:GetDescendants()) do
+                if object:IsA("ScreenGui") and object.Name == "SenseLuaOverlay" then
+                    pcall(function() object:Destroy() end)
+                end
+            end
+        end
+    end
+end
+
 local function load_api()
     local direct = Environment.SenseMenuApiUrl
     local base = Environment.SenseMenuBaseUrl
@@ -81,6 +102,57 @@ else
         for key, value in pairs(existingApi.Colors or {}) do Api:SetColor(key, value) end
     end
 end
+for key, value in pairs({ show_personalization = false, menu_tint_strength = 0,
+    target_hud_scale = 1 }) do
+    if not Api:Has(key) then Api:Register(key, value) end
+end
+do
+    local targetScale = math.clamp(tonumber(Api:Get("target_hud_scale")) or 1, 0.75, 1.5)
+    Api:Set("target_hud_scale", targetScale)
+    -- Older live API objects can survive a hot reload. Keep their carried state
+    -- inside the new HUD limit even when their old Set implementation is reused.
+    if Api:Get("target_hud_scale") ~= targetScale then Api.State.target_hud_scale = targetScale end
+end
+-- Utility popouts should only open after an explicit click in this session.
+for _, key in ipairs({ "show_configs", "show_personalization" }) do
+    if Api:Has(key) and Api:Get(key) ~= false then Api:Set(key, false) end
+end
+for key, entry in pairs({
+    menu_surface_color = { Color3.fromRGB(62, 51, 68), { mode = "Solid" } },
+    animation_color = { Color3.fromRGB(61, 54, 64), {
+        mode = "Horizontal", secondary = Color3.fromRGB(62, 51, 68),
+    } },
+    checkbox_color = { Color3.fromRGB(62, 51, 68), {
+        mode = "Horizontal", secondary = Color3.fromRGB(48, 39, 51),
+    } },
+    slider_color = { Color3.fromRGB(63, 48, 69), {
+        mode = "Vertical", secondary = Color3.fromRGB(44, 37, 43),
+    } },
+    menu_window_color = { Color3.fromRGB(15, 15, 17), { mode = "Solid" } },
+    menu_panel_color = { Color3.fromRGB(11, 13, 13), { mode = "Solid" } },
+    menu_panel_alt_color = { Color3.fromRGB(19, 21, 23), { mode = "Solid" } },
+    menu_field_color = { Color3.fromRGB(15, 17, 17), { mode = "Solid" } },
+    menu_field_top_color = { Color3.fromRGB(27, 29, 29), { mode = "Solid" } },
+    menu_hover_color = { Color3.fromRGB(30, 32, 32), { mode = "Solid" } },
+    menu_border_color = { Color3.fromRGB(29, 31, 31), { mode = "Solid" } },
+    menu_bevel_color = { Color3.fromRGB(68, 64, 70), { mode = "Solid" } },
+    menu_bevel_inner_color = { Color3.fromRGB(39, 32, 42), { mode = "Solid" } },
+    menu_text_color = { Color3.fromRGB(244, 246, 245), { mode = "Solid" } },
+    menu_dim_color = { Color3.fromRGB(131, 133, 133), { mode = "Solid" } },
+    window_rail_color = { Color3.fromRGB(68, 64, 70), {
+        mode = "Horizontal", secondary = Color3.fromRGB(39, 32, 42),
+    } },
+    tab_rail_color = { Color3.fromRGB(46, 42, 50), {
+        mode = "Horizontal", secondary = Color3.fromRGB(20, 18, 24),
+    } },
+    section_rail_color = { Color3.fromRGB(39, 32, 42), {
+        mode = "Horizontal", secondary = Color3.fromRGB(46, 42, 50),
+    } },
+}) do
+    if not Api:GetColor(key) then
+        Api:RegisterColor(key, entry[1], 1, entry[2])
+    end
+end
 local S, C = Api.State, Api.Colors
 local Menu = { Api = Api, State = S, Colors = C, Connections = {}, ColorSwatches = {},
     Open = true, Destroyed = false }
@@ -124,6 +196,28 @@ local T = {
     text = Color3.fromRGB(244, 246, 245), dim = Color3.fromRGB(131, 133, 133),
     disabled = Color3.fromRGB(59, 56, 63),
 }
+local baseTheme = {}
+for key, value in pairs(T) do baseTheme[key] = value end
+local surfaceThemeKeys = { "window", "panel", "panelAlt", "field", "fieldTop", "hover",
+    "border", "bevel", "bevelInner" }
+local paletteColorKeys = {
+    window = "menu_window_color", panel = "menu_panel_color",
+    panelAlt = "menu_panel_alt_color", field = "menu_field_color",
+    fieldTop = "menu_field_top_color", hover = "menu_hover_color",
+    border = "menu_border_color", bevel = "menu_bevel_color",
+    bevelInner = "menu_bevel_inner_color", text = "menu_text_color",
+    dim = "menu_dim_color",
+}
+local paletteApiKeys = {}
+for _, apiKey in pairs(paletteColorKeys) do paletteApiKeys[apiKey] = true end
+local apply_menu_tint
+
+local function themed_surface(base, tint, strength)
+    local hue, saturation = tint:ToHSV()
+    local _, _, brightness = base:ToHSV()
+    local colored = Color3.fromHSV(hue, saturation, brightness)
+    return base:Lerp(colored, strength)
+end
 
 local function conn(signal, callback)
     local connection = signal:Connect(callback)
@@ -166,6 +260,38 @@ end
 local function gradient(parent, top, bottom, rotation, preserveBase)
     if not preserveBase then parent.BackgroundColor3 = Color3.new(1, 1, 1) end
     return new("UIGradient", parent, { Color = ColorSequence.new(top, bottom), Rotation = rotation or 90 })
+end
+
+local chromeSurfaces = { window = {}, tabs = {}, sections = {} }
+local chromeColorKeys = {
+    window = { "window_rail_color", "window_rail_color_secondary" },
+    tabs = { "tab_rail_color", "tab_rail_color_secondary" },
+    sections = { "section_rail_color", "section_rail_color_secondary" },
+}
+local function register_chrome_surface(object, group)
+    local keys = chromeColorKeys[group]
+    if not keys then return object end
+    object.BackgroundColor3 = C[keys[1]]
+    local effect = object:FindFirstChildOfClass("UIGradient")
+        or gradient(object, C[keys[1]], C[keys[2]], 0)
+    effect.Color = ColorSequence.new(C[keys[1]], C[keys[2]])
+    chromeSurfaces[group][#chromeSurfaces[group] + 1] = { object = object, effect = effect }
+    return object
+end
+local function refresh_chrome_colors(group)
+    local groups = group and { group } or { "window", "tabs", "sections" }
+    for _, groupName in ipairs(groups) do
+        local entries, keys = chromeSurfaces[groupName], chromeColorKeys[groupName]
+        for index = #entries, 1, -1 do
+            local entry = entries[index]
+            if not entry.object.Parent then
+                table.remove(entries, index)
+            else
+                entry.object.BackgroundColor3 = C[keys[1]]
+                entry.effect.Color = ColorSequence.new(C[keys[1]], C[keys[2]])
+            end
+        end
+    end
 end
 
 local function frame(parent, x, y, w, h, color, name)
@@ -240,15 +366,43 @@ local function combo_surface(parent, text, x, y, w, h)
     return control, caption, arrow, hover
 end
 
+local sliderSurfaces = {}
 local function slider_surface(track)
+    local primary = C.slider_color or C.accent_secondary
+    local secondary = C.slider_color_secondary or C.accent
+    local leftTop, leftMiddle, leftBottom
+    local middleTop, middleMiddle, middleBottom
+    local rightTop, rightMiddle, rightBottom
+    local leftHighlightStart, middleHighlight, rightHighlightEnd
+    local capTop, capMiddle, capLower, capBottom
+    local function calculate_palette()
+        primary = C.slider_color or C.accent_secondary
+        secondary = C.slider_color_secondary or C.accent
+        middleTop = primary
+        middleMiddle = primary:Lerp(secondary, 0.34)
+        middleBottom = secondary
+        leftTop = primary:Lerp(T.text, 0.12)
+        leftMiddle = middleMiddle:Lerp(T.dim, 0.12)
+        leftBottom = secondary:Lerp(T.window, 0.28)
+        rightTop = primary:Lerp(T.dim, 0.18)
+        rightMiddle = middleMiddle:Lerp(T.window, 0.12)
+        rightBottom = secondary:Lerp(T.window, 0.18)
+        leftHighlightStart = leftMiddle:Lerp(T.text, 0.08)
+        middleHighlight = primary:Lerp(T.text, 0.06)
+        rightHighlightEnd = rightMiddle:Lerp(T.text, 0.06)
+        capTop, capMiddle = rightTop, rightMiddle
+        capLower = rightMiddle:Lerp(rightBottom, 0.55)
+        capBottom = rightBottom
+    end
+    calculate_palette()
     local fillBar = frame(track, 1, 1, 0, 8, Color3.new(1, 1, 1), "Fill")
     fillBar.ClipsDescendants = true
     fillBar.ZIndex = track.ZIndex + 1
-    local body = gradient(fillBar, Color3.fromRGB(63, 48, 69), Color3.fromRGB(44, 37, 43))
+    local body = gradient(fillBar, middleTop, middleBottom)
     body.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(63, 48, 69)),
-        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(61, 45, 64)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(44, 37, 43)),
+        ColorSequenceKeypoint.new(0, middleTop),
+        ColorSequenceKeypoint.new(0.55, middleMiddle),
+        ColorSequenceKeypoint.new(1, middleBottom),
     })
     local left = frame(fillBar, 0, 0, 10, 8, T.window, "LeftRamp")
     left.BackgroundTransparency = 1
@@ -258,12 +412,6 @@ local function slider_surface(track)
     right.BackgroundTransparency = 1
     right.ClipsDescendants = true
     right.ZIndex = fillBar.ZIndex + 1
-    local leftTop, leftMiddle, leftBottom = Color3.fromRGB(54, 50, 57),
-        Color3.fromRGB(52, 47, 54), Color3.fromRGB(35, 31, 38)
-    local middleTop, middleMiddle, middleBottom = Color3.fromRGB(63, 48, 69),
-        Color3.fromRGB(61, 45, 64), Color3.fromRGB(44, 37, 43)
-    local rightTop, rightMiddle, rightBottom = Color3.fromRGB(56, 51, 59),
-        Color3.fromRGB(54, 48, 56), Color3.fromRGB(42, 37, 45)
     local leftColumns, rightColumns = {}, {}
     local function ramp_column(parent, x, name)
         local pixel = frame(parent, x, 0, 1, 8, Color3.new(1, 1, 1), name)
@@ -278,7 +426,7 @@ local function slider_surface(track)
         local pixel, shading = ramp_column(right, index - 1, "RightPixel" .. index)
         rightColumns[index] = { pixel = pixel, shading = shading }
     end
-    local highlight = frame(fillBar, 0, 1, 1, 1, Color3.fromRGB(64, 47, 69), "Highlight")
+    local highlight = frame(fillBar, 0, 1, 1, 1, middleHighlight, "Highlight")
     highlight.Size = UDim2.new(1, 0, 0, 1)
     highlight.ZIndex = fillBar.ZIndex + 2
     local leftHighlights, rightHighlights = {}, {}
@@ -297,11 +445,12 @@ local function slider_surface(track)
     local cap = frame(fillBar, 0, 0, 1, 8, Color3.new(1, 1, 1), "EndCap")
     cap.Position = UDim2.new(1, -1, 0, 0)
     cap.ZIndex = highlight.ZIndex + 2
-    gradient(cap, Color3.fromRGB(55, 50, 58), Color3.fromRGB(44, 39, 47)).Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(55, 50, 58)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(54, 48, 56)),
-        ColorSequenceKeypoint.new(0.75, Color3.fromRGB(50, 45, 53)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(44, 39, 47)),
+    local capGradient = gradient(cap, capTop, capBottom)
+    capGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, capTop),
+        ColorSequenceKeypoint.new(0.5, capMiddle),
+        ColorSequenceKeypoint.new(0.75, capLower),
+        ColorSequenceKeypoint.new(1, capBottom),
     })
     local previousLeft, previousRight = -1, -1
     local function fit_segments()
@@ -328,8 +477,7 @@ local function slider_surface(track)
                         ColorSequenceKeypoint.new(0.55, leftMiddle:Lerp(middleMiddle, fraction)),
                         ColorSequenceKeypoint.new(1, leftBottom:Lerp(middleBottom, fraction)),
                     })
-                    mark.BackgroundColor3 = Color3.fromRGB(52, 47, 55):Lerp(
-                        Color3.fromRGB(64, 47, 69), fraction)
+                    mark.BackgroundColor3 = leftHighlightStart:Lerp(middleHighlight, fraction)
                 end
             end
         end
@@ -346,8 +494,7 @@ local function slider_surface(track)
                         ColorSequenceKeypoint.new(0.55, middleMiddle:Lerp(rightMiddle, fraction)),
                         ColorSequenceKeypoint.new(1, middleBottom:Lerp(rightBottom, fraction)),
                     })
-                    mark.BackgroundColor3 = Color3.fromRGB(64, 47, 69):Lerp(
-                        Color3.fromRGB(55, 50, 58), fraction)
+                    mark.BackgroundColor3 = middleHighlight:Lerp(rightHighlightEnd, fraction)
                 end
             end
         end
@@ -357,6 +504,24 @@ local function slider_surface(track)
     end
     conn(fillBar:GetPropertyChangedSignal("AbsoluteSize"), fit_segments)
     fit_segments()
+    local function repaint()
+        calculate_palette()
+        body.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, middleTop),
+            ColorSequenceKeypoint.new(0.55, middleMiddle),
+            ColorSequenceKeypoint.new(1, middleBottom),
+        })
+        highlight.BackgroundColor3 = middleHighlight
+        capGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, capTop),
+            ColorSequenceKeypoint.new(0.5, capMiddle),
+            ColorSequenceKeypoint.new(0.75, capLower),
+            ColorSequenceKeypoint.new(1, capBottom),
+        })
+        previousLeft, previousRight = -1, -1
+        fit_segments()
+    end
+    sliderSurfaces[#sliderSurfaces + 1] = { fill = fillBar, repaint = repaint }
     for _, edge in ipairs({
         { "BorderTop", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 1) },
         { "BorderBottom", UDim2.new(0, 0, 1, -1), UDim2.new(1, 0, 0, 1) },
@@ -369,6 +534,17 @@ local function slider_surface(track)
         line.ZIndex = track.ZIndex + 4
     end
     return fillBar
+end
+
+local function refresh_slider_colors()
+    for index = #sliderSurfaces, 1, -1 do
+        local entry = sliderSurfaces[index]
+        if not entry.fill.Parent then
+            table.remove(sliderSurfaces, index)
+        else
+            entry.repaint()
+        end
+    end
 end
 
 local function field_track_top_line(track)
@@ -396,6 +572,52 @@ local gui = new("ScreenGui", guiParent, { Name = "SenseLuaOverlay", ResetOnSpawn
     IgnoreGuiInset = true, DisplayOrder = 1000, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
 Menu.Gui = gui
 
+local function same_color(first, second)
+    return math.abs(first.R - second.R) < 0.0001
+        and math.abs(first.G - second.G) < 0.0001
+        and math.abs(first.B - second.B) < 0.0001
+end
+
+apply_menu_tint = function()
+    local old, replacements = {}, {}
+    local tint = C.menu_surface_color or C.accent_secondary
+    local strength = math.clamp((tonumber(S.menu_tint_strength) or 0) / 100, 0, 1)
+    for key in pairs(baseTheme) do old[key] = T[key] end
+    for key, colorKey in pairs(paletteColorKeys) do
+        T[key] = C[colorKey] or baseTheme[key]
+    end
+    T.borderDark = baseTheme.borderDark
+    T.disabled = T.dim:Lerp(T.window, 0.58)
+    for _, key in ipairs(surfaceThemeKeys) do
+        local themed = T[key]
+        T[key] = themed_surface(themed, tint, strength)
+    end
+    for key in pairs(baseTheme) do
+        replacements[#replacements + 1] = { old[key], T[key] }
+    end
+    local function replace_color(color)
+        for _, pair in ipairs(replacements) do
+            if same_color(color, pair[1]) then return pair[2] end
+        end
+        return color
+    end
+    for _, object in ipairs(gui:GetDescendants()) do
+        if object:IsA("GuiObject") then
+            object.BackgroundColor3 = replace_color(object.BackgroundColor3)
+        elseif object:IsA("UIStroke") then
+            object.Color = replace_color(object.Color)
+        elseif object:IsA("UIGradient") then
+            local points, changed = {}, false
+            for _, point in ipairs(object.Color.Keypoints) do
+                local color = replace_color(point.Value)
+                points[#points + 1] = ColorSequenceKeypoint.new(point.Time, color)
+                changed = changed or not same_color(color, point.Value)
+            end
+            if changed then object.Color = ColorSequence.new(points) end
+        end
+    end
+end
+
 local viewport = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
 local main = new("CanvasGroup", gui, { Name = "Main", Position = px(28, 70),
     Size = px(644, 668), BackgroundColor3 = T.window, BorderSizePixel = 0,
@@ -412,12 +634,13 @@ end
 
 -- Port the twelve native DrawBevel inset rails, including their side gradients.
 local bevelLayers = {
-    T.bevel, T.borderDark, Color3.fromRGB(29, 25, 33), Color3.fromRGB(28, 26, 30),
+    C.window_rail_color, T.borderDark, Color3.fromRGB(29, 25, 33), Color3.fromRGB(28, 26, 30),
     Color3.fromRGB(27, 28, 29), Color3.fromRGB(27, 28, 30), T.borderDark,
     T.border, T.panelAlt, T.window, T.panel, T.window, T.borderDark, T.border,
 }
 for i, color in ipairs(bevelLayers) do
     local rail = frame(main, i, i, 644 - i * 2, 668 - i * 2, color, "Rail" .. i)
+    if i == 1 then register_chrome_surface(rail, "window") end
     rail.ZIndex = 1
 end
 local content = frame(main, 15, 15, 614, 638, T.window, "Content")
@@ -458,19 +681,22 @@ gutter(14, 68, 616, 1, Color3.fromRGB(30, 32, 34), "LowerTabHighlight")
 gutter(14, 69, 616, 4, T.window, "LowerTabSpacer")
 local header = frame(main, 7, 7, 630, 22, Color3.fromRGB(26, 28, 28), "Header")
 header.ZIndex = 4
-local movingGloss = {}
+local movingGloss, glossSurfaces = {}, {}
 local function gloss(parent, x, y, width, speed, lowerColor)
     local top = frame(parent, x, y, width, 1, Color3.new(1, 1, 1), "GlossTop")
-    gradient(top, Color3.fromRGB(61, 54, 64), C.accent_secondary, 0)
+    local animationColor = C.animation_color or C.accent
+    local animationSecondary = C.animation_color_secondary or C.accent_secondary
+    local topGradient = gradient(top, animationColor, animationSecondary, 0)
     top.ZIndex = 5
     local lower = frame(parent, x, y + 1, width, 1,
         lowerColor or Color3.fromRGB(46, 42, 50), "GlossLower")
     lower.ZIndex = 5
     local sheen = {}
     for index, alpha in ipairs({ { 0.16, 0.96 }, { 0.13, 0.74 } }) do
-        local strip = frame(parent, x, y + index - 1, 56, 1, T.text, "MovingGloss" .. index)
+        local stripColor = animationSecondary:Lerp(T.text, 0.68)
+        local strip = frame(parent, x, y + index - 1, 56, 1, stripColor, "MovingGloss" .. index)
         strip.ZIndex = 6
-        local effect = gradient(strip, T.text, T.text, 0)
+        local effect = gradient(strip, stripColor, stripColor, 0)
         effect.Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1 - alpha[1]),
             NumberSequenceKeypoint.new(18 / 56, 1 - alpha[2]),
@@ -478,8 +704,30 @@ local function gloss(parent, x, y, width, speed, lowerColor)
         })
         sheen[index] = strip
     end
+    glossSurfaces[#glossSurfaces + 1] = { top = topGradient, strips = sheen }
     if speed then
         movingGloss[#movingGloss + 1] = { strips = sheen, x = x, width = width, speed = speed }
+    end
+end
+
+local function refresh_gloss_colors()
+    local primary = C.animation_color or C.accent
+    local secondary = C.animation_color_secondary or C.accent_secondary
+    local stripColor = secondary:Lerp(T.text, 0.68)
+    for index = #glossSurfaces, 1, -1 do
+        local entry = glossSurfaces[index]
+        if not entry.top.Parent then
+            table.remove(glossSurfaces, index)
+        else
+            entry.top.Color = ColorSequence.new(primary, secondary)
+            for _, strip in ipairs(entry.strips) do
+                if strip.Parent then
+                    strip.BackgroundColor3 = stripColor
+                    local effect = strip:FindFirstChildOfClass("UIGradient")
+                    if effect then effect.Color = ColorSequence.new(stripColor, stripColor) end
+                end
+            end
+        end
     end
 end
 for index, cell in ipairs({ { 0, 140, "" }, { 144, 340, "Sense" },
@@ -565,7 +813,9 @@ local headerDragHit = new("TextButton", header, { Name = "HeaderDragHit", Text =
 local tabStrip = frame(main, 14, 39, 616, 24, T.panelAlt, "Tabs")
 tabStrip.ZIndex = 4
 gradient(tabStrip, Color3.fromRGB(20, 22, 25), Color3.fromRGB(11, 16, 15))
-frame(tabStrip, 1, 3, 614, 1, Color3.fromRGB(20, 18, 24), "TabTopLine").ZIndex = 5
+local tabTopLine = register_chrome_surface(
+    frame(tabStrip, 1, 3, 614, 1, C.tab_rail_color, "TabTopLine"), "tabs")
+tabTopLine.ZIndex = 5
 frame(tabStrip, 0, 0, 616, 1, T.borderDark, "TabBorderTop").ZIndex = 5
 frame(tabStrip, 0, 23, 616, 1, T.borderDark, "TabBorderBottom").ZIndex = 5
 gloss(tabStrip, 0, 1, 616, function() return 70 end)
@@ -728,14 +978,23 @@ conn(UserInputService.InputBegan, function(input, processed)
     end
 end)
 
-local function make_draggable(target, handle, condition)
-    local dragging, start, origin
+local function make_draggable(target, handle, condition, followers)
+    local dragging, start, origin, followerOrigins
     conn(handle.InputBegan, function(input)
         if condition and not condition() then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             start = input.Position
             origin = target.Position
+            followerOrigins = {}
+            local linked = type(followers) == "function" and followers() or followers
+            for _, follower in ipairs(type(linked) == "table" and linked or {}) do
+                if follower and follower.Parent then
+                    followerOrigins[#followerOrigins + 1] = {
+                        object = follower, position = follower.Position,
+                    }
+                end
+            end
         end
     end)
     conn(UserInputService.InputChanged, function(input)
@@ -744,15 +1003,30 @@ local function make_draggable(target, handle, condition)
             local d = input.Position - start
             target.Position = UDim2.new(origin.X.Scale, origin.X.Offset + d.X,
                 origin.Y.Scale, origin.Y.Offset + d.Y)
+            for _, entry in ipairs(followerOrigins or {}) do
+                if entry.object.Parent then
+                    entry.object.Position = UDim2.new(entry.position.X.Scale,
+                        entry.position.X.Offset + d.X, entry.position.Y.Scale,
+                        entry.position.Y.Offset + d.Y)
+                end
+            end
         end
     end)
     conn(UserInputService.InputEnded, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
+            followerOrigins = nil
         end
     end)
 end
-make_draggable(main, headerDragHit)
+local config
+local personalization
+make_draggable(main, headerDragHit, nil, function()
+    local linked = {}
+    if config then linked[#linked + 1] = config end
+    if personalization then linked[#linked + 1] = personalization end
+    return linked
+end)
 
 local function panel(parent, title, x, y, w, h)
     local shell = frame(parent, x, y, w, h, T.panelAlt, title)
@@ -763,7 +1037,9 @@ local function panel(parent, title, x, y, w, h)
     stroke(inner, T.border)
     local top = frame(shell, 1, 1, w - 2, 17, T.panelAlt, "Title")
     label(top, title, 4, 1, w - 10, 16, T.dim, 13)
-    frame(shell, 1, 1, w - 2, 1, T.bevelInner, "TitleInnerHighlight").ZIndex = 4
+    local sectionRail = register_chrome_surface(
+        frame(shell, 1, 1, w - 2, 1, C.section_rail_color, "TitleInnerHighlight"), "sections")
+    sectionRail.ZIndex = 4
     gloss(shell, 3, 2, w - 6, function() return S.shine_speed end)
     local body = new("ScrollingFrame", shell, { Name = "Body", Position = px(6, 18),
         Size = px(w - 12, h - 18), BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -1170,11 +1446,25 @@ local function toggle_surface(parent, key, enabled)
     stroke(check, T.borderDark)
     local top = frame(check, 1, 1, 8, 1, T.border, "TopHighlight")
     top.ZIndex = check.ZIndex + 1
-    local checkFill = frame(check, 1, 1, 8, 8, C.accent_secondary, "CheckFill")
+    local checkboxTop = C.checkbox_color or C.accent_secondary
+    local checkboxBottom = C.checkbox_color_secondary or C.accent
+    local checkFill = frame(check, 1, 1, 8, 8, checkboxTop, "CheckFill")
     checkFill.ZIndex = check.ZIndex + 2
-    gradient(checkFill, C.accent_secondary, C.accent)
+    gradient(checkFill, checkboxTop, checkboxBottom)
     checkFill.BackgroundTransparency = enabled and 0 or 1
     return check, checkFill
+end
+
+local function refresh_checkbox_colors()
+    local top = C.checkbox_color or C.accent_secondary
+    local bottom = C.checkbox_color_secondary or C.accent
+    for _, object in ipairs(gui:GetDescendants()) do
+        if object:IsA("GuiObject") and object.Name == "CheckFill" then
+            object.BackgroundColor3 = top
+            local effect = object:FindFirstChildOfClass("UIGradient")
+            if effect then effect.Color = ColorSequence.new(top, bottom) end
+        end
+    end
 end
 
 local function add_control(body, spec)
@@ -1575,7 +1865,10 @@ local schemas = externalSchemas or {
             sl("FPS Cap", "overlay_fps", 30, 5000, " FPS", nil,
                 { when = function(s) return not s.overlay_vsync end }), sep(),
             togg("Watermark", "show_watermark"), togg("Keybind list", "show_keybinds"),
-            togg("Target HUD", "silent_target_marker"), togg("Config manager", "show_configs"),
+            togg("Target HUD", "silent_target_marker", { rebuild = true }),
+            sl("Target HUD Scale", "target_hud_scale", 0.75, 1.5, "x", 2,
+                { when = visibleIf("silent_target_marker") }),
+            togg("Config manager", "show_configs"),
             sep(), sec("Shine"),
             togg("Shine", "window_shine"), control("color", "Color", "shine_color"),
             sl("Speed", "shine_speed", 0, 140, ""), sl("Glow", "shine_glow", 0, 100, ""),
@@ -1698,48 +1991,96 @@ local function detached(name, w, h, y, rightOffset)
         Position = UDim2.new(1, -(w + (rightOffset or 8)), 0, y), Size = px(w, h),
         BackgroundColor3 = T.window, BorderSizePixel = 0, GroupTransparency = 1, ZIndex = 10 })
     stroke(group, T.borderDark)
-    frame(group, 2, 2, w - 4, h - 4, T.panel)
+    local bevel = frame(group, 1, 1, w - 2, h - 2, T.window, "OuterBevel")
+    bevel.BackgroundTransparency = 1
+    stroke(bevel, T.bevel)
+    local surface = frame(group, 2, 2, w - 4, h - 4, T.panel, "Surface")
+    surface.Size = UDim2.new(1, -4, 1, -4)
+    stroke(surface, T.borderDark)
     return group
 end
 
 local watermark = detached("Watermark", 116, 32, 44)
 local watermarkField = frame(watermark, 7, 8, 102, 18, T.fieldTop)
+gradient(watermarkField, T.fieldTop, T.field)
 stroke(watermarkField, T.borderDark)
-label(watermarkField, "Sense", 9, 0, 31, 18, T.text, 11)
-label(watermarkField, " / ", 40, 0, 14, 18, T.disabled, 11)
-label(watermarkField, "release", 54, 0, 45, 18, T.text, 11)
+local watermarkSense = label(watermarkField, "Sense", 4, 0, 39, 18, T.text, 11)
+local watermarkSlash = label(watermarkField, " / ", 42, 0, 12, 18, T.disabled, 11)
+local watermarkRelease = label(watermarkField, "release", 53, 0, 45, 18, T.text, 11)
+watermarkSense.Font, watermarkSlash.Font, watermarkRelease.Font = Enum.Font.ArialBold,
+    Enum.Font.ArialBold, Enum.Font.ArialBold
+for _, segment in ipairs({ watermarkSense, watermarkSlash, watermarkRelease }) do
+    segment:SetAttribute("SenseFontTracking", 1.05)
+    segment:SetAttribute("SenseFontBold", true)
+end
+make_draggable(watermark, watermarkField, function() return Menu.Open end)
 
 local function titled(group, title, w, h)
     local bar = frame(group, 5, 4, w - 10, 22, T.fieldTop, "TitleBar")
     gradient(bar, T.fieldTop, T.field)
     stroke(bar, T.borderDark)
+    local barInset = frame(bar, 1, 1, w - 12, 20, T.fieldTop, "InnerBorder")
+    barInset.BackgroundTransparency = 1
+    stroke(barInset, T.border)
+    frame(bar, 2, 2, w - 14, 1, T.bevelInner, "TopHighlight")
+    local accentLine = frame(bar, 1, 20, w - 12, 1, C.accent, "AccentLine")
+    accentLine.BackgroundTransparency = 1 - 78 / 255
     label(bar, title, 0, 0, w - 10, 22, T.text, 12, Enum.TextXAlignment.Center)
     local field = frame(group, 7, 30, w - 14, h - 37, T.field, "Field")
+    gradient(field, T.fieldTop, T.field)
     stroke(field, T.borderDark)
+    local fieldInset = frame(field, 1, 1, w - 16, h - 39, T.field, "InnerBorder")
+    fieldInset.BackgroundTransparency = 1
+    stroke(fieldInset, T.border)
     return bar, field
 end
 
 local keybindHeight = S.rivals_detected and 136 or 120
 local keybinds = detached("Keybinds", 190, keybindHeight, 322)
-local _, keyField = titled(keybinds, "Keybinds", 190, keybindHeight)
+local keybindTitle, keyField = titled(keybinds, "Keybinds", 190, keybindHeight)
+make_draggable(keybinds, keybindTitle, function() return Menu.Open end)
 local function refresh_keybinds()
     for _, child in ipairs(keyField:GetChildren()) do
         if child:IsA("TextLabel") then child:Destroy() end
     end
-    local rows = { { "Silent Aim", "silent_enabled", "silent_key" },
-        { "Triggerbot", "trigger_enabled", "trigger_key" },
-        { "Walk Speed", "walk_speed_enabled", "walk_speed_key" },
-        { "Fly", "fly_enabled", "fly_key" }, { "Desync", "desync_enabled", "desync_key" } }
-    if S.rivals_detected then rows[#rows + 1] = { "Slide Boost", "rivals_slide_boost", "rivals_slide_key" } end
-    for i, item in ipairs(rows) do
+    local rows = {}
+    local configured = Menu.KeybindRows or Api.KeybindRows or Environment.SenseMenuKeybindRows
+    if type(configured) == "table" and #configured > 0 then
+        for _, item in ipairs(configured) do
+            local key = tostring(S[item.keyFlag] or "None")
+            local isMenuBind = item.keyFlag == "sense_bind_key_menu_keybind"
+                or tostring(item.label):lower() == "menu keybind"
+            if not isMenuBind and key ~= "None" and key ~= "NONE" and key ~= "Unknown" then
+                rows[#rows + 1] = { item.label, item.stateFlag, item.keyFlag }
+            end
+        end
+    else
+        local defaults = { { "Silent Aim", "silent_enabled", "silent_key" },
+            { "Triggerbot", "trigger_enabled", "trigger_key" },
+            { "Walk Speed", "walk_speed_enabled", "walk_speed_key" },
+            { "Fly", "fly_enabled", "fly_key" }, { "Desync", "desync_enabled", "desync_key" } }
+        for _, item in ipairs(defaults) do rows[#rows + 1] = item end
+        if S.rivals_detected then
+            rows[#rows + 1] = { "Slide Boost", "rivals_slide_boost", "rivals_slide_key" }
+        end
+    end
+    if #rows == 0 then
+        label(keyField, "No binds assigned", 3, 1, 168, 15, T.dim, 11)
+        return
+    end
+    local maximumRows = S.rivals_detected and 6 or 5
+    for i = 1, math.min(#rows, maximumRows) do
+        local item = rows[i]
         label(keyField, item[1], 3, 1 + (i - 1) * 16, 125, 15,
-            S[item[2]] and T.text or T.dim, 11)
-        label(keyField, short_key(S[item[3]]), 126, 1 + (i - 1) * 16, 42, 15,
+            (item[2] == nil or S[item[2]]) and T.text or T.dim, 11)
+        label(keyField, short_key(item[4] or S[item[3]]), 126, 1 + (i - 1) * 16, 42, 15,
             T.dim, 11, Enum.TextXAlignment.Right)
     end
 end
 
 local target = detached("TargetHUD", 190, 84, 92)
+target.AnchorPoint = Vector2.new(1, 0)
+target.Position = UDim2.new(1, -8, 0, 92)
 local targetTitle, targetField = titled(target, "Target", 190, 84)
 local portrait = frame(targetField, 1, 2, 44, 44, T.fieldTop, "Portrait")
 gradient(portrait, T.fieldTop, T.panel)
@@ -1760,6 +2101,52 @@ local healthFill = frame(healthBack, 1, 1, 126, 15, C.accent_secondary, "Fill")
 gradient(healthFill, C.accent_secondary, C.accent)
 local healthText = label(healthBack, "", 0, 0, 128, 17, T.text, 11,
     Enum.TextXAlignment.Center)
+healthText:SetAttribute("SenseFontTracking", 1.25)
+healthText:SetAttribute("SenseFontBold", true)
+local targetBaseGeometry = {}
+for _, object in ipairs(target:GetDescendants()) do
+    local entry = { object = object }
+    if object:IsA("GuiObject") then
+        entry.position, entry.size = object.Position, object.Size
+        if object:IsA("TextLabel") or object:IsA("TextButton") then
+            entry.textSize = object.TextSize
+        end
+    elseif object:IsA("UIStroke") then
+        entry.thickness = object.Thickness
+    end
+    targetBaseGeometry[#targetBaseGeometry + 1] = entry
+end
+local currentTargetScale = 1
+local function scaled_offset(value, scale)
+    return value >= 0 and math.floor(value * scale + 0.5)
+        or math.ceil(value * scale - 0.5)
+end
+local function scale_target_hud(value)
+    local scale = math.clamp(tonumber(value) or 1, 0.75, 1.5)
+    if S.target_hud_scale ~= scale then S.target_hud_scale = scale end
+    if math.abs(scale - currentTargetScale) < 0.001 then return end
+    currentTargetScale = scale
+    target.Size = px(scaled_offset(190, scale), scaled_offset(84, scale))
+    for _, entry in ipairs(targetBaseGeometry) do
+        local object = entry.object
+        if object.Parent then
+            if entry.position then
+                object.Position = UDim2.new(entry.position.X.Scale,
+                    scaled_offset(entry.position.X.Offset, scale), entry.position.Y.Scale,
+                    scaled_offset(entry.position.Y.Offset, scale))
+                object.Size = UDim2.new(entry.size.X.Scale,
+                    scaled_offset(entry.size.X.Offset, scale), entry.size.Y.Scale,
+                    scaled_offset(entry.size.Y.Offset, scale))
+                if entry.textSize then
+                    object.TextSize = math.max(1, entry.textSize * scale)
+                    object:SetAttribute("SenseFontScale", scale)
+                end
+            elseif entry.thickness then
+                object.Thickness = entry.thickness * scale
+            end
+        end
+    end
+end
 local thumbnailUserId = 0
 local function refresh_target()
     local data = Api.Target
@@ -1769,7 +2156,9 @@ local function refresh_target()
     targetPart.Text = preview and "move target HUD" or data.part
     distanceText.Text = data.distance >= 0 and string.format("%.0f st", data.distance) or "-- st"
     local fraction = preview and 1 or (data.maxHealth > 0 and math.clamp(data.health / data.maxHealth, 0, 1) or 0)
-    tween(healthFill, { Size = UDim2.new(fraction, -2 * fraction, 0, 15) }, 22)
+    tween(healthFill, { Size = UDim2.new(fraction,
+        scaled_offset(-2 * fraction, currentTargetScale), 0,
+        scaled_offset(15, currentTargetScale)) }, 22)
     healthText.Text = preview and "drag me" or (data.maxHealth > 0 and
         string.format("%.0f/%.0f", data.health, data.maxHealth) or "health --")
     portraitText.Text = preview and "DRAG ME" or "LOCK"
@@ -1785,44 +2174,7 @@ local function refresh_target()
 end
 make_draggable(target, targetTitle, function() return Menu.Open end)
 
--- The C++ overlay has no player-list popout. This extra window is deliberately separate.
-local playerlist = detached("PlayerList", 220, 246, 184, 206)
-local _, playerField = titled(playerlist, "Players", 220, 246)
-local playerScroll = new("ScrollingFrame", playerField, { Name = "Players", Position = px(2, 2),
-    Size = UDim2.new(1, -4, 1, -4), BackgroundTransparency = 1, BorderSizePixel = 0,
-    ScrollBarThickness = 4, ScrollBarImageColor3 = C.accent_secondary,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = px(0, 0) })
-new("UIListLayout", playerScroll, { SortOrder = Enum.SortOrder.Name, Padding = UDim.new(0, 1) })
-local function refresh_players()
-    for _, child in ipairs(playerScroll:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
-    end
-    for _, player in ipairs(Players:GetPlayers()) do
-        local b = new("TextButton", playerScroll, { Name = player.Name, Size = UDim2.new(1, -5, 0, 18),
-            Text = player.DisplayName == player.Name and player.Name
-                or (player.DisplayName .. "  @" .. player.Name),
-            BackgroundColor3 = T.fieldTop, BorderSizePixel = 0, AutoButtonColor = false,
-            Font = Enum.Font.Arial, TextSize = 11, TextColor3 = player == Players.LocalPlayer and C.accent_secondary or T.text,
-            TextXAlignment = Enum.TextXAlignment.Left })
-        stroke(b, T.border)
-        conn(b.MouseButton1Click, function()
-            local character = player.Character
-            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-            local root = character and character:FindFirstChild("HumanoidRootPart")
-            local ownRoot = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            Api:SetTarget({ active = true, name = player.DisplayName, part = "Player list",
-                health = humanoid and humanoid.Health or 0, maxHealth = humanoid and humanoid.MaxHealth or 0,
-                distance = root and ownRoot and (root.Position - ownRoot.Position).Magnitude or -1,
-                userId = player.UserId })
-        end)
-    end
-    prune_connections()
-end
-conn(Players.PlayerAdded, refresh_players)
-conn(Players.PlayerRemoving, refresh_players)
-refresh_players()
-
-local config = detached("Config", 302, 340, math.max(8, viewport.Y - 341), 217)
+config = detached("Config", 302, 340, math.max(8, viewport.Y - 341), 217)
 do
     local view = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or viewport
     local menuWidth, configWidth, gap = 644, 302, 7
@@ -1851,7 +2203,6 @@ local configAccentLine = frame(configBar, 0, 21, 286, 1, C.accent, "AccentLine")
 configAccentLine.BackgroundTransparency = 1 - 78 / 255
 label(configBar, "Config", 0, 0, 286, 22, T.text, 12,
     Enum.TextXAlignment.Center).ZIndex = 7
-make_draggable(config, configBar)
 local search = new("TextBox", config, { Name = "ConfigSearch", Position = px(13, 38), Size = px(276, 18),
     BackgroundColor3 = T.fieldTop, BorderSizePixel = 0, ClearTextOnFocus = false,
     PlaceholderText = "search or new config", Text = "", Font = Enum.Font.Arial,
@@ -1952,6 +2303,68 @@ action_button("Load", 13, 308, 276, function()
 end)
 refresh_configs()
 
+personalization = detached("Personalization", 302, 330, 0, 217)
+personalization.Position = UDim2.new(config.Position.X.Scale, config.Position.X.Offset,
+    config.Position.Y.Scale, config.Position.Y.Offset + 347)
+local personalizationBar = frame(personalization, 8, 7, 286, 22, T.fieldTop, "TitleBar")
+gradient(personalizationBar, T.fieldTop, T.field)
+stroke(personalizationBar, T.borderDark)
+local personalizationBarInset = frame(personalizationBar, 1, 1, 284, 20, T.fieldTop, "InnerBorder")
+personalizationBarInset.BackgroundTransparency = 1
+stroke(personalizationBarInset, T.border)
+frame(personalizationBar, 1, 1, 284, 1, T.bevelInner, "TopHighlight")
+gloss(personalizationBar, 3, 2, 280, function() return S.shine_speed end)
+local personalizationAccentLine = frame(personalizationBar, 0, 21, 286, 1, C.accent, "AccentLine")
+personalizationAccentLine.BackgroundTransparency = 1 - 78 / 255
+label(personalizationBar, "Personalization", 0, 0, 286, 22, T.text, 12,
+    Enum.TextXAlignment.Center).ZIndex = 7
+
+local personalizationBody = new("ScrollingFrame", personalization, {
+    Name = "PersonalizationControls", Position = px(13, 38), Size = px(276, 280),
+    BackgroundColor3 = T.panelAlt, BorderSizePixel = 0, ScrollBarThickness = 0,
+    ScrollBarImageColor3 = C.accent_secondary, AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = px(0, 0),
+})
+gradient(personalizationBody, T.panelAlt, T.panel)
+stroke(personalizationBody, T.border)
+new("UIPadding", personalizationBody, { PaddingLeft = UDim.new(0, 1),
+    PaddingTop = UDim.new(0, 4), PaddingRight = UDim.new(0, 2),
+    PaddingBottom = UDim.new(0, 4) })
+new("UIListLayout", personalizationBody, {
+    Padding = UDim.new(0, 0), SortOrder = Enum.SortOrder.LayoutOrder,
+})
+for _, spec in ipairs({
+    sec("Menu colors"),
+    control("color", "Surface tint", "menu_surface_color", { advanced = false }),
+    sl("Surface tint strength", "menu_tint_strength", 0, 100, "%"),
+    control("color", "Accent gradient", "accent", { secondary = "accent_secondary" }),
+    control("color", "Checkbox gradient", "checkbox_color",
+        { secondary = "checkbox_color_secondary" }),
+    control("color", "Slider gradient", "slider_color",
+        { secondary = "slider_color_secondary" }),
+    sec("Chrome rails"),
+    control("color", "Window outer rail", "window_rail_color",
+        { secondary = "window_rail_color_secondary" }),
+    control("color", "Tab rail", "tab_rail_color",
+        { secondary = "tab_rail_color_secondary" }),
+    control("color", "Section rail", "section_rail_color",
+        { secondary = "section_rail_color_secondary" }),
+    sec("Animation"),
+    togg("Enable animations", "animations"),
+    togg("Enable shine halo", "window_shine"),
+    control("color", "Animation color", "animation_color",
+        { secondary = "animation_color_secondary" }),
+    control("color", "Shine halo color", "shine_color",
+        { secondary = "shine_color_secondary" }),
+    sl("Control animation speed", "scroll_speed", 0, 100, "%"),
+    sl("Menu fade speed", "menu_fade_speed", 0, 100, "%"),
+    sl("Section fade speed", "section_fade_speed", 0, 100, "%"),
+    sl("Tab fade speed", "tab_fade_speed", 0, 100, "%"),
+    sl("Moving shine speed", "shine_speed", 0, 140, "%"),
+}) do
+    add_control(personalizationBody, spec)
+end
+
 local HIT_WIDTH, HIT_HEIGHT, HIT_GAP = 252, 48, 6
 local hitCards = {}
 
@@ -2046,25 +2459,30 @@ local function show_window(window, visible)
         window.Visible = true
         tween(window, { GroupTransparency = 0 }, S.menu_fade_speed)
     elseif window.Visible then
-        if window.GroupTransparency > 0.99 then window.Visible = false; return end
-        tween(window, { GroupTransparency = 1 }, S.menu_fade_speed)
-        local fadeTime = S.animations and animation_duration(S.menu_fade_speed) + 0.02 or 0
-        task.delay(fadeTime, function()
-            if window.Parent and window.GroupTransparency > 0.95 then window.Visible = false end
-        end)
+        -- CanvasGroup transparency does not reliably suppress every UIStroke
+        -- in all Roblox renderers. Fully hide closed windows to prevent empty
+        -- black frames from leaking over the game.
+        window.GroupTransparency = 1
+        window.Visible = false
     end
 end
 
 refreshWindows = function()
     if Menu.Destroyed then return end
+    local targetVisible = S.silent_target_marker and (Api.Target.active or Menu.Open)
     show_window(watermark, S.show_watermark)
     show_window(keybinds, S.show_keybinds)
-    show_window(target, S.silent_target_marker and (Api.Target.active or Menu.Open))
-    show_window(playerlist, S.show_playerlist)
+    show_window(target, targetVisible)
     show_window(config, S.show_configs and Menu.Open)
+    show_window(personalization, S.show_personalization and Menu.Open)
+    scale_target_hud(S.target_hud_scale)
     refresh_keybinds()
     refresh_target()
     layout_hit_cards()
+end
+
+function Menu:RefreshWindows()
+    if not self.Destroyed then refreshWindows() end
 end
 
 function Menu:SetOpen(value)
@@ -2079,9 +2497,14 @@ end
 function Menu:SetTarget(data) self.Api:SetTarget(data) end
 function Menu:ClearTarget() self.Api:ClearTarget() end
 function Menu:NotifyHit(data) return self.Api:NotifyHit(data) end
-function Menu:SetPlayerListVisible(value) return self.Api:Set("show_playerlist", value == true) end
 function Menu:SetConfigVisible(value) return self.Api:Set("show_configs", value == true) end
 function Menu:ToggleConfigs() return self.Api:Set("show_configs", not self.State.show_configs) end
+function Menu:SetPersonalizationVisible(value)
+    return self.Api:Set("show_personalization", value == true)
+end
+function Menu:TogglePersonalization()
+    return self.Api:Set("show_personalization", not self.State.show_personalization)
+end
 function Menu:SaveConfig(name) return self.Api:SaveConfig(name) end
 function Menu:LoadConfig(name)
     local ok, err = self.Api:LoadConfig(name)
@@ -2108,6 +2531,28 @@ conn(Api.Changed.Event, function(key)
         activeTab = S.active_tab
         queue_page_refresh()
     elseif key == "color:accent" or key == "color:accent_secondary" then
+        configAccentLine.BackgroundColor3 = C.accent
+        personalizationAccentLine.BackgroundColor3 = C.accent
+        queue_page_refresh()
+    elseif key == "color:checkbox_color" or key == "color:checkbox_color_secondary" then
+        refresh_checkbox_colors()
+    elseif key == "color:animation_color" or key == "color:animation_color_secondary" then
+        refresh_gloss_colors()
+    elseif key == "color:slider_color" or key == "color:slider_color_secondary" then
+        refresh_slider_colors()
+    elseif key == "color:window_rail_color" or key == "color:window_rail_color_secondary" then
+        refresh_chrome_colors("window")
+    elseif key == "color:tab_rail_color" or key == "color:tab_rail_color_secondary" then
+        refresh_chrome_colors("tabs")
+    elseif key == "color:section_rail_color" or key == "color:section_rail_color_secondary" then
+        refresh_chrome_colors("sections")
+    elseif key == "color:menu_surface_color" or key == "menu_tint_strength" then
+        apply_menu_tint()
+        refresh_slider_colors()
+        queue_page_refresh()
+    elseif colorKey and paletteApiKeys[colorKey] then
+        apply_menu_tint()
+        refresh_slider_colors()
         queue_page_refresh()
     elseif menuSetDepth == 0 and (visibleKeys[key] or key == "rivals_detected"
         or key == "dahood_detected") then
@@ -2124,7 +2569,8 @@ conn(RunService.RenderStepped, function()
             table.remove(movingGloss, index)
         else
             local travel = math.max(0, entry.width - 56)
-            local distance = travel > 0 and (os.clock() * entry.speed()) % (travel * 2) or 0
+            local distance = S.animations and travel > 0
+                and (os.clock() * entry.speed()) % (travel * 2) or 0
             local offset = distance <= travel and distance or travel * 2 - distance
             for _, strip in ipairs(entry.strips) do
                 strip.Position = px(entry.x + math.floor(offset + 0.5), strip.Position.Y.Offset)
@@ -2167,6 +2613,11 @@ end
 
 activeTab = schemas[activeTab] and activeTab or tabNames[1]
 if S.active_tab ~= activeTab then Api:Set("active_tab", activeTab) end
+apply_menu_tint()
+refresh_checkbox_colors()
+refresh_gloss_colors()
+refresh_slider_colors()
+refresh_chrome_colors()
 render_tab(activeTab)
 refreshWindows()
 Menu:SetOpen(true)

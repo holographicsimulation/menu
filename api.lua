@@ -5,6 +5,11 @@ API.__index = API
 API.Version = 2
 API.ConfigDirectory = "configs"
 
+local transientStateKeys = {
+    show_configs = true,
+    show_personalization = true,
+}
+
 
 local colorDefaults = {
     accent = Color3.fromRGB(48, 39, 51), accent_secondary = Color3.fromRGB(62, 51, 68),
@@ -24,6 +29,30 @@ local colorDefaults = {
     desync_ghost_color = Color3.fromRGB(148, 61, 255),
     desync_ghost_color_secondary = Color3.fromRGB(199, 148, 255),
     shine_color = Color3.fromRGB(48, 39, 51), shine_color_secondary = Color3.fromRGB(62, 51, 68),
+    menu_surface_color = Color3.fromRGB(62, 51, 68),
+    animation_color = Color3.fromRGB(61, 54, 64),
+    animation_color_secondary = Color3.fromRGB(62, 51, 68),
+    checkbox_color = Color3.fromRGB(62, 51, 68),
+    checkbox_color_secondary = Color3.fromRGB(48, 39, 51),
+    slider_color = Color3.fromRGB(63, 48, 69),
+    slider_color_secondary = Color3.fromRGB(44, 37, 43),
+    menu_window_color = Color3.fromRGB(15, 15, 17),
+    menu_panel_color = Color3.fromRGB(11, 13, 13),
+    menu_panel_alt_color = Color3.fromRGB(19, 21, 23),
+    menu_field_color = Color3.fromRGB(15, 17, 17),
+    menu_field_top_color = Color3.fromRGB(27, 29, 29),
+    menu_hover_color = Color3.fromRGB(30, 32, 32),
+    menu_border_color = Color3.fromRGB(29, 31, 31),
+    menu_bevel_color = Color3.fromRGB(68, 64, 70),
+    menu_bevel_inner_color = Color3.fromRGB(39, 32, 42),
+    menu_text_color = Color3.fromRGB(244, 246, 245),
+    menu_dim_color = Color3.fromRGB(131, 133, 133),
+    window_rail_color = Color3.fromRGB(68, 64, 70),
+    window_rail_color_secondary = Color3.fromRGB(39, 32, 42),
+    tab_rail_color = Color3.fromRGB(46, 42, 50),
+    tab_rail_color_secondary = Color3.fromRGB(20, 18, 24),
+    section_rail_color = Color3.fromRGB(39, 32, 42),
+    section_rail_color_secondary = Color3.fromRGB(46, 42, 50),
 }
 
 local colorOptionsDefaults = {}
@@ -33,6 +62,9 @@ for key, color in pairs(colorDefaults) do
     if not key:match("_secondary$") then
         primaryColors[#primaryColors + 1] = { key, color }
         colorOptionsDefaults[key] = { mode = (key == "accent" or key == "box_color" or key == "shine_color"
+                or key == "animation_color" or key == "checkbox_color" or key == "slider_color"
+                or key == "window_rail_color" or key == "tab_rail_color"
+                or key == "section_rail_color"
                 or key == "raycast_tracer_color" or key == "raycast_damage_color"
                 or key == "armor_color" or key == "desync_ghost_color")
                 and "Horizontal" or (key == "fov_draw_color" and "Vertical" or "Solid"),
@@ -244,6 +276,8 @@ function API:Set(key, value)
         value = math.clamp(value, 0.25, 15)
     elseif key == "hit_notifications_max_count" then
         value = math.floor(math.clamp(value, 1, 20))
+    elseif key == "target_hud_scale" then
+        value = math.clamp(value, 0.75, 1.5)
     end
     self.State[key] = copy(value)
     self.Changed:Fire(key, self.State[key])
@@ -514,9 +548,11 @@ function API:SaveConfig(name)
         colors[key] = { math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5) }
     end
     local customDefaults = copy(self.Defaults)
+    local savedState = copy(self.State)
+    for key in pairs(transientStateKeys) do savedState[key] = nil end
     local ok, err = pcall(function()
         local json = HttpService:JSONEncode({ version = self.Version,
-            state = self.State, customDefaults = customDefaults, colors = colors,
+            state = savedState, customDefaults = customDefaults, colors = colors,
             colorAlpha = self.ColorAlpha, colorOptions = self.ColorOptions })
         writefile(path, json)
     end)
@@ -542,7 +578,10 @@ function API:LoadConfig(name)
         end
     end
     for key, value in pairs(type(data.state) == "table" and data.state or {}) do
-        if self:Has(key) and type(value) == type(self.Defaults[key]) then self:Set(key, value) end
+        if not transientStateKeys[key] and self:Has(key)
+            and type(value) == type(self.Defaults[key]) then
+            self:Set(key, value)
+        end
     end
     for key, rgb in pairs(type(data.colors) == "table" and data.colors or {}) do
         if self.ColorDefaults[key] and type(rgb) == "table" then

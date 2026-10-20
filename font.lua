@@ -124,6 +124,10 @@ function Attachment:_colors()
         glyph.ImageColor3 = color
         glyph.ImageTransparency = self.transparency
     end
+    for _, glyph in ipairs(self.boldGlyphs) do
+        glyph.ImageColor3 = color
+        glyph.ImageTransparency = self.transparency
+    end
 end
 
 local function make_image(parent, image, zIndex)
@@ -145,6 +149,9 @@ end
 function Attachment:_render()
     if not self.overlay or not self.host.Parent then return end
     local host, face = self.host, FACES[self.kind]
+    local scale = math.clamp(tonumber(host:GetAttribute("SenseFontScale")) or 1, 0.5, 4)
+    local tracking = tonumber(host:GetAttribute("SenseFontTracking")) or self.tracking
+    local bold = host:GetAttribute("SenseFontBold") == true
     local text = self.text
     local codes = glyphs_for(text)
     if not codes then
@@ -170,20 +177,21 @@ function Attachment:_render()
             local line = lines[#lines]
             for _ = 1, 4 do
                 line.codes[#line.codes + 1] = 32
-                line.width = line.width + advance(face, 32)
+                line.width = line.width + advance(face, 32) * scale
             end
         elseif codepoint >= 32 and codepoint <= 255 then
             local line = lines[#lines]
             line.codes[#line.codes + 1] = codepoint
-            line.width = line.width + advance(face, codepoint)
+            line.width = line.width + advance(face, codepoint) * scale
         end
     end
     for _, line in ipairs(lines) do
-        line.width = line.width + math.max(0, #line.codes - 1) * self.tracking
+        line.width = line.width + math.max(0, #line.codes - 1) * tracking * scale
+        if bold and #line.codes > 0 then line.width = line.width + scale end
     end
 
     local size = host.AbsoluteSize
-    local totalHeight = #lines * face.line
+    local totalHeight = #lines * face.line * scale
     local y = 0
     if host.TextYAlignment == Enum.TextYAlignment.Center then
         y = math.floor((size.Y - totalHeight) * 0.5 + 0.5)
@@ -199,7 +207,8 @@ function Attachment:_render()
             x = size.X - line.width
         end
         for _, codepoint in ipairs(line.codes) do
-            local width = advance(face, codepoint)
+            local sourceWidth = advance(face, codepoint)
+            local width = sourceWidth * scale
             if codepoint ~= 32 and width > 0 then
                 visibleGlyphs = visibleGlyphs + 1
                 local glyph = self.glyphs[visibleGlyphs]
@@ -212,17 +221,36 @@ function Attachment:_render()
                     (index % COLUMNS) * CELL_WIDTH,
                     (face.row + math.floor(index / COLUMNS)) * CELL_HEIGHT
                 )
-                glyph.ImageRectSize = Vector2.new(width, face.height)
-                glyph.Position = UDim2.fromOffset(math.floor(x), y + face.offset + self.yOffset)
-                glyph.Size = UDim2.fromOffset(width, face.height)
+                glyph.ImageRectSize = Vector2.new(sourceWidth, face.height)
+                glyph.Position = UDim2.fromOffset(math.floor(x + 0.5),
+                    math.floor(y + (face.offset + self.yOffset) * scale + 0.5))
+                glyph.Size = UDim2.fromOffset(math.max(1, math.floor(width + 0.5)),
+                    math.max(1, math.floor(face.height * scale + 0.5)))
                 glyph.ZIndex = host.ZIndex + 1
                 glyph.Visible = true
+                local boldGlyph = self.boldGlyphs[visibleGlyphs]
+                if bold then
+                    if not boldGlyph then
+                        boldGlyph = make_image(self.overlay, self.asset, host.ZIndex + 1)
+                        self.boldGlyphs[visibleGlyphs] = boldGlyph
+                    end
+                    boldGlyph.ImageRectOffset = glyph.ImageRectOffset
+                    boldGlyph.ImageRectSize = glyph.ImageRectSize
+                    boldGlyph.Position = glyph.Position + UDim2.fromOffset(math.max(1,
+                        math.floor(scale + 0.5)), 0)
+                    boldGlyph.Size = glyph.Size
+                    boldGlyph.ZIndex = glyph.ZIndex
+                    boldGlyph.Visible = true
+                elseif boldGlyph then
+                    boldGlyph.Visible = false
+                end
             end
-            x = x + width + self.tracking
+            x = x + width + tracking * scale
         end
-        y = y + face.line
+        y = y + face.line * scale
     end
     for index = visibleGlyphs + 1, #self.glyphs do self.glyphs[index].Visible = false end
+    for index = visibleGlyphs + 1, #self.boldGlyphs do self.boldGlyphs[index].Visible = false end
     self:_colors()
 end
 
@@ -268,7 +296,7 @@ function Font.attach(host, kind)
     local self = setmetatable({
         host = host, overlay = overlay, asset = asset, kind = faceKind,
         text = host.Text, transparency = host.TextTransparency,
-        glyphs = {}, connections = {},
+        glyphs = {}, boldGlyphs = {}, connections = {},
         tracking = tracking, yOffset = yOffset,
     }, Attachment)
     attached[host] = self
@@ -294,6 +322,15 @@ function Font.attach(host, kind)
         self:_colors()
     end)
     listen("AbsoluteSize", function() self:_render() end)
+    self.connections[#self.connections + 1] = host:GetAttributeChangedSignal("SenseFontScale"):Connect(function()
+        self:_render()
+    end)
+    self.connections[#self.connections + 1] = host:GetAttributeChangedSignal("SenseFontTracking"):Connect(function()
+        self:_render()
+    end)
+    self.connections[#self.connections + 1] = host:GetAttributeChangedSignal("SenseFontBold"):Connect(function()
+        self:_render()
+    end)
     listen("TextXAlignment", function() self:_render() end)
     listen("TextYAlignment", function() self:_render() end)
     listen("ZIndex", function()

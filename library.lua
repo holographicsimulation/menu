@@ -109,12 +109,14 @@ local function create_library(options)
         flags = {}, options = {}, themes = {}, Connections = {}, Indicators = {},
         Tabs = {}, TabOrder = {}, Defaults = {}, Colors = {}, Built = false,
         Suppress = {}, BindStates = {}, BindModes = {}, ColorOptions = {},
+        OverlayKeybinds = {},
     }
 
     local baseDefaults = {
         active_tab = "Visuals", menu_key = "RightShift", animations = true,
         show_watermark = false, show_keybinds = false, show_configs = false,
-        show_playerlist = false, silent_target_marker = false,
+        show_personalization = false, menu_tint_strength = 0,
+        silent_target_marker = false, target_hud_scale = 1,
         hit_notifications_enabled = false, hit_notifications_duration = 3,
         hit_notifications_max_count = 5, rivals_detected = false, dahood_detected = false,
         overlay_streamproof = false, overlay_vsync = false, overlay_fps = 240,
@@ -124,6 +126,61 @@ local function create_library(options)
         shine_halo_size = 32, shine_halo_amount = 44, menu_glow = 72, menu_blur = 35,
     }
     for key, value in pairs(baseDefaults) do library.Defaults[key] = value end
+
+    local function rgb(r, g, b) return Color3.fromRGB(r, g, b) end
+    local function preset(name, accent, background, border1, border2, group, option)
+        local brightAccent = accent:Lerp(Color3.new(1, 1, 1), 0.18)
+        return { name = name, theme = {
+            accent = accent, accent_secondary = brightAccent,
+            window = background, panel = background:Lerp(Color3.new(0, 0, 0), 0.18),
+            panel_alt = group, field = option:Lerp(background, 0.35), field_top = option,
+            hover = option:Lerp(Color3.new(1, 1, 1), 0.09), border = border1,
+            bevel = border1:Lerp(Color3.new(1, 1, 1), 0.22),
+            bevel_inner = border2:Lerp(accent, 0.12),
+            text = rgb(244, 246, 245), dim = rgb(137, 140, 140),
+            checkbox = brightAccent, checkbox_secondary = accent,
+            slider = brightAccent:Lerp(group, 0.22),
+            slider_secondary = accent:Lerp(background, 0.42),
+            animation = brightAccent, animation_secondary = accent,
+            shine = accent, shine_secondary = brightAccent,
+            window_rail = border1:Lerp(accent, 0.18),
+            window_rail_secondary = border2:Lerp(accent, 0.12),
+            tab_rail = border2:Lerp(accent, 0.22),
+            tab_rail_secondary = border2:Lerp(background, 0.35),
+            section_rail = border2:Lerp(accent, 0.26),
+            section_rail_secondary = border1:Lerp(accent, 0.20),
+        } }
+    end
+    library.themes = {
+        { name = "Sense", theme = {
+            accent = rgb(48, 39, 51), accent_secondary = rgb(62, 51, 68),
+            window = rgb(15, 15, 17), panel = rgb(11, 13, 13), panel_alt = rgb(19, 21, 23),
+            field = rgb(15, 17, 17), field_top = rgb(27, 29, 29), hover = rgb(30, 32, 32),
+            border = rgb(29, 31, 31), bevel = rgb(68, 64, 70), bevel_inner = rgb(39, 32, 42),
+            text = rgb(244, 246, 245), dim = rgb(131, 133, 133),
+            checkbox = rgb(62, 51, 68), checkbox_secondary = rgb(48, 39, 51),
+            slider = rgb(63, 48, 69), slider_secondary = rgb(44, 37, 43),
+            animation = rgb(61, 54, 64), animation_secondary = rgb(62, 51, 68),
+            shine = rgb(48, 39, 51), shine_secondary = rgb(62, 51, 68),
+            window_rail = rgb(68, 64, 70), window_rail_secondary = rgb(39, 32, 42),
+            tab_rail = rgb(46, 42, 50), tab_rail_secondary = rgb(20, 18, 24),
+            section_rail = rgb(39, 32, 42), section_rail_secondary = rgb(46, 42, 50),
+        } },
+        preset("Default", rgb(159, 143, 243), rgb(18, 18, 18), rgb(60, 60, 60),
+            rgb(35, 35, 35), rgb(35, 35, 35), rgb(35, 35, 35)),
+        preset("Tokyo Night", rgb(103, 89, 179), rgb(22, 22, 31), rgb(50, 50, 50),
+            rgb(24, 25, 37), rgb(24, 25, 37), rgb(24, 25, 37)),
+        preset("Nekocheat", rgb(226, 30, 112), rgb(18, 18, 18), rgb(60, 60, 60),
+            rgb(35, 35, 35), rgb(18, 18, 18), rgb(23, 23, 23)),
+        preset("Nekocheat Blue", rgb(0, 247, 255), rgb(18, 18, 18), rgb(60, 60, 60),
+            rgb(35, 35, 35), rgb(18, 18, 18), rgb(23, 23, 23)),
+        preset("Fatality", rgb(197, 7, 83), rgb(25, 19, 53), rgb(60, 53, 93),
+            rgb(29, 23, 66), rgb(29, 23, 66), rgb(29, 23, 66)),
+        preset("Gamesense", rgb(147, 184, 26), rgb(17, 17, 17), rgb(47, 47, 47),
+            rgb(35, 35, 35), rgb(17, 17, 17), rgb(35, 35, 35)),
+        preset("Twitch", rgb(169, 112, 255), rgb(14, 14, 14), rgb(45, 45, 45),
+            rgb(31, 31, 35), rgb(31, 31, 35), rgb(24, 24, 27)),
+    }
 
     local function register(flag, value)
         if type(flag) == "string" and library.Defaults[flag] == nil then
@@ -202,6 +259,10 @@ local function create_library(options)
             library.options[bindFlag] = bind
             library.BindStates[keyFlag] = bind
             library.BindModes[modeFlag] = bind
+            library.OverlayKeybinds[#library.OverlayKeybinds + 1] = {
+                label = tostring(data.text or option.flag), stateFlag = option.flag,
+                keyFlag = keyFlag, modeFlag = modeFlag,
+            }
             function bind:SetKeyText() end
             function bind:SetBind(nextKey)
                 local name = key_name(nextKey)
@@ -455,10 +516,13 @@ local function create_library(options)
     function library:Attach(menu)
         if not menu or not menu.Api then return false end
         self.Menu, self.Api, self.Built = menu, menu.Api, true
+        menu.KeybindRows = self.OverlayKeybinds
+        menu.Api.KeybindRows = self.OverlayKeybinds
         self:_bindApi()
         for _, indicator in ipairs(self.Indicators) do
             if indicator.Holder and not indicator.Holder.Parent then indicator.Holder.Parent = menu.Gui end
         end
+        if type(menu.RefreshWindows) == "function" then menu:RefreshWindows() end
         return true
     end
 
@@ -481,6 +545,7 @@ local function create_library(options)
         Environment.SenseMenuSchemas = schemas
         Environment.SenseMenuTabNames = self.TabOrder
         Environment.SenseMenuPageHeights = heights
+        Environment.SenseMenuKeybindRows = self.OverlayKeybinds
         Environment.SenseMenuConfigDirectory = options.configDirectory
         local menu
         if type(options.loadMenu) == "function" then
@@ -489,7 +554,10 @@ local function create_library(options)
             local source = game:HttpGet(Environment.SenseMenuBaseUrl:gsub("/+$", "") .. "/menu.lua")
             menu = loadstring(source)()
         end
-        if menu then self:Attach(menu) end
+        if menu then
+            self:Attach(menu)
+            if self.theme then self:SetTheme(self.theme) end
+        end
         return menu
     end
 
@@ -505,7 +573,53 @@ local function create_library(options)
         return menu.Api:Set("show_configs", value == true)
     end
     function library:ToggleConfigs() return self:SetConfigsOpen(nil) end
-    function library:SetTheme() end
+    function library:SetPersonalizationOpen(value)
+        local menu = self:_build()
+        if not menu or not menu.Api then return false end
+        if value == nil then value = not menu.Api.State.show_personalization end
+        return menu.Api:Set("show_personalization", value == true)
+    end
+    function library:TogglePersonalization() return self:SetPersonalizationOpen(nil) end
+    function library:SetTheme(theme)
+        if type(theme) == "string" then
+            for _, entry in ipairs(self.themes) do
+                if entry.name == theme then
+                    theme = entry.theme
+                    break
+                end
+            end
+        end
+        if type(theme) ~= "table" then return false end
+        local menu = self:_build()
+        local api = menu and menu.Api
+        if not api then return false end
+        self.theme = theme
+        local colorMap = {
+            accent = "accent", accent_secondary = "accent_secondary",
+            window = "menu_window_color", panel = "menu_panel_color",
+            panel_alt = "menu_panel_alt_color", field = "menu_field_color",
+            field_top = "menu_field_top_color", hover = "menu_hover_color",
+            border = "menu_border_color", bevel = "menu_bevel_color",
+            bevel_inner = "menu_bevel_inner_color", text = "menu_text_color",
+            dim = "menu_dim_color", checkbox = "checkbox_color",
+            checkbox_secondary = "checkbox_color_secondary", slider = "slider_color",
+            slider_secondary = "slider_color_secondary", animation = "animation_color",
+            animation_secondary = "animation_color_secondary", shine = "shine_color",
+            shine_secondary = "shine_color_secondary",
+            window_rail = "window_rail_color",
+            window_rail_secondary = "window_rail_color_secondary",
+            tab_rail = "tab_rail_color", tab_rail_secondary = "tab_rail_color_secondary",
+            section_rail = "section_rail_color",
+            section_rail_secondary = "section_rail_color_secondary",
+        }
+        if api:Has("menu_tint_strength") then api:Set("menu_tint_strength", 0) end
+        local surfaceTint = theme.surface_tint or theme.accent_secondary or theme.accent
+        if typeof(surfaceTint) == "Color3" then api:SetColor("menu_surface_color", surfaceTint) end
+        for themeKey, colorKey in pairs(colorMap) do
+            if typeof(theme[themeKey]) == "Color3" then api:SetColor(colorKey, theme[themeKey]) end
+        end
+        return true
+    end
     function library:SendNotification(message, duration)
         pcall(StarterGui.SetCore, StarterGui, "SendNotification", {
             Title = options.cheatname or "Sense", Text = tostring(message), Duration = duration or 3,
