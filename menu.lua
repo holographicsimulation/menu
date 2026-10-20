@@ -49,6 +49,7 @@ local MenuDefaults
 if Environment.SenseMenuDefaults ~= nil then
     MenuDefaults = ApiFactory.ParseDefaults(Environment.SenseMenuDefaults)
 end
+local MenuColors = type(Environment.SenseMenuColors) == "table" and Environment.SenseMenuColors or nil
 local existingApi = Environment.SenseMenuApi
 local Api
 if type(existingApi) == "table" and existingApi.Version == 2 and not existingApi.Destroyed
@@ -64,9 +65,10 @@ if type(existingApi) == "table" and existingApi.Version == 2 and not existingApi
         end
         if next(additions) then Api:RegisterDefaults(additions) end
     end
+    if MenuColors and type(Api.RegisterColors) == "function" then Api:RegisterColors(MenuColors) end
 else
     if not MenuDefaults then return nil end
-    local created = ApiFactory.new({ defaults = MenuDefaults,
+    local created = ApiFactory.new({ defaults = MenuDefaults, colors = MenuColors,
         configDirectory = Environment.SenseMenuConfigDirectory })
     if type(created) ~= "table" then return nil end
     Api = created
@@ -563,7 +565,10 @@ frame(tabStrip, 0, 23, 616, 1, T.borderDark, "TabBorderBottom").ZIndex = 5
 gloss(tabStrip, 0, 1, 616, function() return 70 end)
 local tabButtons = {}
 local pages = {}
-local tabNames = { "Combat", "Visuals", "Exploits", "Settings" }
+local externalSchemas = type(Environment.SenseMenuSchemas) == "table" and Environment.SenseMenuSchemas or nil
+local tabNames = type(Environment.SenseMenuTabNames) == "table" and Environment.SenseMenuTabNames
+    or { "Combat", "Visuals", "Exploits", "Settings" }
+if #tabNames == 0 then tabNames = { "Combat" } end
 local activeTab = S.active_tab
 
 local pageArea = frame(main, 15, 73, 616, 570, T.window, "PageArea")
@@ -1276,7 +1281,7 @@ local origins = { "Mouse cursor", "Screen center" }
 local fonts = { "Small Fonts", "ProggyTiny", "ProggyClean", "Tahoma", "Verdana", "Consolas", "Arial", "Poppins" }
 local visibleIf = function(k) return function(s) return s[k] end end
 
-local schemas = {
+local schemas = externalSchemas or {
     Combat = {
         { title = "Aimbot", x = 0, y = 0, h = 350, rows = {
             kt("Enabled", "aimbot_enabled", "aimbot_key", "aimbot_key_mode"),
@@ -1469,9 +1474,12 @@ local schemas = {
     },
 }
 
+local tabWidth = 616 / #tabNames
 for index, name in ipairs(tabNames) do
+    local tabX = math.floor((index - 1) * tabWidth + 0.5)
+    local nextX = math.floor(index * tabWidth + 0.5)
     local tab = new("TextButton", tabStrip, { Name = name, Text = name,
-        Position = px((index - 1) * 154, 0), Size = px(154, 24),
+        Position = px(tabX, 0), Size = px(nextX - tabX, 24),
         BackgroundTransparency = 1, BorderSizePixel = 0, AutoButtonColor = false,
         Active = true, Font = Enum.Font.Arial, TextSize = 13,
         TextColor3 = T.dim, ZIndex = 6 })
@@ -1482,7 +1490,7 @@ for index, name in ipairs(tabNames) do
         tween(tab, { TextColor3 = S.active_tab == name and T.disabled or T.dim }, S.tab_fade_speed)
     end)
     if index > 1 then
-        local divider = frame(tabStrip, (index - 1) * 154, 3, 1, 21, T.borderDark, "TabDivider")
+        local divider = frame(tabStrip, tabX, 3, 1, 21, T.borderDark, "TabDivider")
         divider.ZIndex = 5
     end
     tabButtons[name] = tab
@@ -1499,10 +1507,13 @@ local function render_tab(name)
         BackgroundTransparency = 1, GroupTransparency = S.animations and 1 or 0 })
     pages[name] = page
     local panelParent = page
-    if name == "Combat" then
-        panelParent = new("ScrollingFrame", page, { Name = "CombatScroll", Size = fill(),
+    local pageHeights = Environment.SenseMenuPageHeights
+    local canvasHeight = type(pageHeights) == "table" and tonumber(pageHeights[name])
+    if externalSchemas or name == "Combat" then
+        panelParent = new("ScrollingFrame", page, { Name = name .. "Scroll", Size = fill(),
             BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 6,
-            ScrollBarImageColor3 = C.accent_secondary, CanvasSize = px(0, 771) })
+            ScrollBarImageColor3 = C.accent_secondary,
+            CanvasSize = px(0, math.max(570, canvasHeight or (name == "Combat" and 771 or 570))) })
     end
     local specs = schemas[name] or {}
     local shownKeys = {}
@@ -1556,6 +1567,10 @@ function Menu:SelectTab(name)
         self.RequestedTab = nil
         render_tab(name)
     end)
+end
+
+function Menu:Refresh()
+    if not self.Destroyed then refreshCurrent() end
 end
 
 local function detached(name, w, h, y, rightOffset)
@@ -1975,7 +1990,9 @@ function Menu:Destroy()
     if Environment.__SenseLuaMenu == self then Environment.__SenseLuaMenu = nil end
 end
 
-render_tab(schemas[activeTab] and activeTab or "Combat")
+activeTab = schemas[activeTab] and activeTab or tabNames[1]
+if S.active_tab ~= activeTab then Api:Set("active_tab", activeTab) end
+render_tab(activeTab)
 refreshWindows()
 Menu:SetOpen(true)
 local SmallFont = load_font()

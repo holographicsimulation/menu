@@ -175,6 +175,8 @@ function API.new(options)
     self.ColorAlpha = copy(colorAlphaDefaults)
     self.ColorOptions = copy(colorOptionsDefaults)
     self.ColorDefaults = copy(colorDefaults)
+    self.ColorAlphaDefaults = copy(colorAlphaDefaults)
+    self.ColorOptionsDefaults = copy(colorOptionsDefaults)
     self.Target = { active = false, name = "", part = "", health = 0, maxHealth = 0, distance = -1, userId = 0 }
     self.Changed = Instance.new("BindableEvent")
     self.TargetChanged = Instance.new("BindableEvent")
@@ -313,12 +315,14 @@ function API:RegisterColor(key, value, alpha, options)
     self.ColorDefaults[key] = value
     self.Colors[key] = value
     self.ColorAlpha[key] = math.clamp(alpha, 0, 1)
+    self.ColorAlphaDefaults[key] = self.ColorAlpha[key]
     self.ColorOptions[key] = {
         mode = mode,
         angle = math.clamp(tonumber(options.angle) or 0, 0, 360),
         midpoint = math.clamp(tonumber(options.midpoint) or 0.5, 0.05, 0.95),
         speed = math.clamp(tonumber(options.speed) or 0, -100, 100),
     }
+    self.ColorOptionsDefaults[key] = copy(self.ColorOptions[key])
     local secondary = options.secondary
     local secondaryKey = key .. "_secondary"
     if self.ColorDefaults[secondaryKey] == nil then
@@ -326,6 +330,7 @@ function API:RegisterColor(key, value, alpha, options)
         self.ColorDefaults[secondaryKey] = secondary
         self.Colors[secondaryKey] = secondary
         self.ColorAlpha[secondaryKey] = math.clamp(tonumber(options.secondaryAlpha) or alpha, 0, 1)
+        self.ColorAlphaDefaults[secondaryKey] = self.ColorAlpha[secondaryKey]
     end
     self.Changed:Fire("color:" .. key, value)
     return true
@@ -551,7 +556,7 @@ function API:LoadConfig(name)
         if self.ColorAlpha[key] ~= nil then self:SetColorAlpha(key, alpha) end
     end
     for key, options in pairs(type(data.colorOptions) == "table" and data.colorOptions or {}) do
-        if colorOptionsDefaults[key] and type(options) == "table" then
+        if self.ColorOptions[key] and type(options) == "table" then
             for option, value in pairs(options) do self:SetColorOption(key, option, value) end
         end
     end
@@ -593,8 +598,8 @@ function API:Reset()
     if self.Destroyed then return false, "API destroyed" end
     for key, value in pairs(self.Defaults) do self:Set(key, value) end
     for key, color in pairs(self.ColorDefaults) do self:SetColor(key, color) end
-    for key, value in pairs(colorAlphaDefaults) do self:SetColorAlpha(key, value) end
-    for key, options in pairs(colorOptionsDefaults) do
+    for key, value in pairs(self.ColorAlphaDefaults) do self:SetColorAlpha(key, value) end
+    for key, options in pairs(self.ColorOptionsDefaults) do
         for option, value in pairs(options) do self:SetColorOption(key, option, value) end
     end
     self:ClearHitNotifications()
