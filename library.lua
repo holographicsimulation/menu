@@ -112,7 +112,7 @@ local function create_library(options)
     }
 
     local baseDefaults = {
-        active_tab = "Visuals", menu_key = "Insert", animations = true,
+        active_tab = "Visuals", menu_key = "RightShift", animations = true,
         show_watermark = false, show_keybinds = false, show_configs = false,
         show_playerlist = false, silent_target_marker = false,
         hit_notifications_enabled = false, hit_notifications_duration = 3,
@@ -204,14 +204,17 @@ local function create_library(options)
             library.BindModes[modeFlag] = bind
             function bind:SetKeyText() end
             function bind:SetBind(nextKey)
-                self.bind = key_item(nextKey)
                 local name = key_name(nextKey)
+                if self.flag == "menu_keybind" and name == "None" then
+                    name = "RightShift"
+                    nextKey = Enum.KeyCode.RightShift
+                end
+                self.bind = key_item(nextKey)
                 library.Defaults[self.keyFlag] = name
                 if library.Api and library.Api:Has(self.keyFlag) then library.Api:Set(self.keyFlag, name) end
                 if self.flag == "menu_keybind" then
-                    local menuKey = name == "None" and "Insert" or name
-                    library.Defaults.menu_key = menuKey
-                    if library.Api then library.Api:Set("menu_key", menuKey) end
+                    library.Defaults.menu_key = name
+                    if library.Api then library.Api:Set("menu_key", name) end
                 end
                 if self.keycallback then self.keycallback(self.bind) end
             end
@@ -260,6 +263,18 @@ local function create_library(options)
             if not table.find(self.values, value) and #self.values > 0 then value = self.values[1] end
             library:_set(self, value, silent)
         end
+        function option:UpdateOptions(nextValues, nextSelected, silent)
+            if type(nextValues) == "table" then
+                table.clear(self.values)
+                for _, value in ipairs(nextValues) do self.values[#self.values + 1] = value end
+            end
+            local selectedValue = nextSelected or self.selected
+            if #self.values == 0 then selectedValue = ""
+            elseif not table.find(self.values, selectedValue) then selectedValue = self.values[1] end
+            library:_set(self, selectedValue, silent == true)
+            library:_refresh()
+        end
+        option.SetValues = option.UpdateOptions
         function option:ClearValues() table.clear(self.values); library:_refresh() end
         function option:AddValue(value) self.values[#self.values + 1] = value; library:_refresh() end
         function option:SetEnabled(value) self.enabled = value == true end
@@ -371,7 +386,12 @@ local function create_library(options)
                 local name = key_name(value)
                 if name == "None" and bind.state then bind:_fire(false) end
                 if bind.flag == "menu_keybind" then
-                    local menuKey = name == "None" and "Insert" or name
+                    local menuKey = name == "None" and "RightShift" or name
+                    if name == "None" then
+                        bind.bind = Enum.KeyCode.RightShift
+                        self.Defaults[bind.keyFlag] = menuKey
+                        if api:Get(bind.keyFlag) ~= menuKey then api:Set(bind.keyFlag, menuKey) end
+                    end
                     self.Defaults.menu_key = menuKey
                     if api:Has("menu_key") then api:Set("menu_key", menuKey) end
                 end
@@ -478,6 +498,13 @@ local function create_library(options)
         local menu = self:_build()
         if menu then menu:SetOpen(value == true) end
     end
+    function library:SetConfigsOpen(value)
+        local menu = self:_build()
+        if not menu or not menu.Api then return false end
+        if value == nil then value = not menu.Api.State.show_configs end
+        return menu.Api:Set("show_configs", value == true)
+    end
+    function library:ToggleConfigs() return self:SetConfigsOpen(nil) end
     function library:SetTheme() end
     function library:SendNotification(message, duration)
         pcall(StarterGui.SetCore, StarterGui, "SendNotification", {

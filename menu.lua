@@ -84,7 +84,8 @@ else
     end
 end
 local S, C = Api.State, Api.Colors
-local Menu = { Api = Api, State = S, Colors = C, Connections = {}, Open = true, Destroyed = false }
+local Menu = { Api = Api, State = S, Colors = C, Connections = {}, ColorSwatches = {},
+    Open = true, Destroyed = false }
 Environment.__SenseLuaMenu = Menu
 Environment.SenseMenuApi = Api
 
@@ -793,20 +794,50 @@ local function row(body, height, name)
 end
 
 local function paint_swatch(swatch, key)
-    local old = swatch:FindFirstChildOfClass("UIGradient")
+    local surface = swatch:FindFirstChild("Preview") or swatch
+    local old = surface:FindFirstChildOfClass("UIGradient")
     if old then old:Destroy() end
-    swatch.BackgroundColor3 = C[key]
-    swatch.BackgroundTransparency = 1 - (Api.ColorAlpha[key] or 1)
+    surface.BackgroundColor3 = C[key]
+    surface.BackgroundTransparency = 1 - (Api.ColorAlpha[key] or 1)
     local options = Api.ColorOptions[key]
     if options and options.mode ~= "Solid" then
-        local grad = gradient(swatch, C[key], C[key .. "_secondary"] or C[key],
+        local grad = gradient(surface, C[key], C[key .. "_secondary"] or C[key],
             options.mode == "Vertical" and 90 or options.angle)
         grad.Offset = Vector2.new(0, 0)
     end
 end
 
+local function register_color_swatch(swatch, key, secondKey)
+    for _, watchedKey in ipairs({ key, secondKey or key .. "_secondary" }) do
+        local swatches = Menu.ColorSwatches[watchedKey]
+        if not swatches then
+            swatches = setmetatable({}, { __mode = "k" })
+            Menu.ColorSwatches[watchedKey] = swatches
+        end
+        swatches[swatch] = true
+    end
+end
+
+local function refresh_color_swatches(key)
+    local swatches = Menu.ColorSwatches[key]
+    if not swatches then return end
+    for swatch in pairs(swatches) do
+        if swatch.Parent then
+            paint_swatch(swatch, swatch:GetAttribute("ColorKey") or key)
+        else
+            swatches[swatch] = nil
+        end
+    end
+end
+
 local function color_popup(anchor, colorKey, secondKey, advanced)
+    if popup and popupAnchor == anchor then
+        close_popup()
+        return
+    end
     close_popup()
+    popupAnchor = anchor
+    anchor:SetAttribute("PopupOpen", true)
     local ap = root_space(anchor.AbsolutePosition)
     secondKey = secondKey or colorKey .. "_secondary"
     local w, h = advanced and 410 or 232, advanced and 420 or 188
@@ -1085,20 +1116,73 @@ end
 
 local function add_color_controls(parent, colorKey, secondKey, allowAdvanced)
     allowAdvanced = allowAdvanced ~= false
-    local swatch = button(parent, "", 0, 2, 22, 10)
-    swatch.Name = "ColorSwatch"
-    -- Keep the control strokes and pixel-font overlay inside the panel body.
+    local swatch = new("TextButton", parent, { Name = "ColorSwatch", Text = "",
+        Position = px(0, 2), Size = px(22, 10), AutoButtonColor = false,
+        BackgroundColor3 = T.field, BorderSizePixel = 0 })
     swatch.Position = UDim2.new(1, allowAdvanced and -38 or -23, 0, 2)
-    swatch.ClipsDescendants = true
+    swatch:SetAttribute("ColorKey", colorKey)
+    local swatchOutline = stroke(swatch, allowAdvanced and T.border or T.borderDark)
+    local checker = frame(swatch, 1, 1, 20, 8, Color3.fromRGB(34, 36, 36), "Checkerboard")
+    checker.ClipsDescendants = true
+    for index = 0, 9 do
+        local alternate = (index + math.floor(index / 5)) % 2 == 0
+        local cell = frame(checker, (index % 5) * 4, math.floor(index / 5) * 4,
+            4, 4, alternate and Color3.fromRGB(77, 79, 79) or Color3.fromRGB(38, 40, 40), "Cell")
+        cell.ZIndex = checker.ZIndex
+    end
+    local preview = frame(swatch, 1, 1, 20, 8, C[colorKey], "Preview")
+    preview.ZIndex = checker.ZIndex + 1
+    conn(swatch.MouseEnter, function()
+        tween(swatchOutline, { Color = C.accent_secondary }, S.section_fade_speed)
+    end)
+    conn(swatch.MouseLeave, function()
+        tween(swatchOutline, { Color = allowAdvanced and T.border or T.borderDark },
+            S.section_fade_speed)
+    end)
+    register_color_swatch(swatch, colorKey, secondKey)
     paint_swatch(swatch, colorKey)
     conn(swatch.MouseButton1Click, function() color_popup(swatch, colorKey, secondKey, false) end)
     if not allowAdvanced then return end
-    local plus = button(parent, "+", 0, 2, 13, 10)
-    plus.Name = "AdvancedColor"
+    local plus = new("TextButton", parent, { Name = "AdvancedColor", Text = "",
+        Position = px(0, 2), Size = px(13, 10), AutoButtonColor = false,
+        BackgroundColor3 = T.field, BorderSizePixel = 0 })
     plus.Position = UDim2.new(1, -14, 0, 2)
-    plus.ClipsDescendants = true
-    plus.TextSize = 11
+    local plusOutline = stroke(plus, T.border)
+    local horizontal = frame(plus, 3, 4, 7, 1, T.dim, "Horizontal")
+    local vertical = frame(plus, 6, 1, 1, 7, T.dim, "Vertical")
+    horizontal.ZIndex, vertical.ZIndex = plus.ZIndex + 1, plus.ZIndex + 1
+    conn(plus.MouseEnter, function()
+        tween(plusOutline, { Color = C.accent }, S.section_fade_speed)
+        tween(horizontal, { BackgroundColor3 = T.text }, S.section_fade_speed)
+        tween(vertical, { BackgroundColor3 = T.text }, S.section_fade_speed)
+    end)
+    conn(plus.MouseLeave, function()
+        tween(plusOutline, { Color = T.border }, S.section_fade_speed)
+        tween(horizontal, { BackgroundColor3 = T.dim }, S.section_fade_speed)
+        tween(vertical, { BackgroundColor3 = T.dim }, S.section_fade_speed)
+    end)
     conn(plus.MouseButton1Click, function() color_popup(plus, colorKey, secondKey, true) end)
+end
+
+local function toggle_surface(parent, key, enabled)
+    local check = new("TextButton", parent, { Name = key, Text = "", Position = px(0, 3),
+        Size = px(10, 10), AutoButtonColor = false, BackgroundColor3 = T.fieldTop,
+        BorderSizePixel = 0, Active = true })
+    gradient(check, T.fieldTop, T.field)
+    local outline = stroke(check, T.borderDark)
+    local top = frame(check, 1, 1, 8, 1, T.border, "TopHighlight")
+    top.ZIndex = check.ZIndex + 1
+    local checkFill = frame(check, 1, 1, 8, 8, C.accent_secondary, "CheckFill")
+    checkFill.ZIndex = check.ZIndex + 2
+    gradient(checkFill, C.accent_secondary, C.accent)
+    checkFill.BackgroundTransparency = enabled and 0 or 1
+    conn(check.MouseEnter, function()
+        tween(outline, { Color = C.accent }, S.section_fade_speed)
+    end)
+    conn(check.MouseLeave, function()
+        tween(outline, { Color = T.borderDark }, S.section_fade_speed)
+    end)
+    return check, checkFill
 end
 
 local function add_control(body, spec)
@@ -1116,14 +1200,7 @@ local function add_control(body, spec)
         label(r, text, 1, 0, 270, 14, T.dim, 11)
     elseif kind == "toggle" or kind == "keytoggle" then
         local r = row(body, 16, key)
-        local check = new("TextButton", r, { Name = key, Text = "", Position = px(0, 3), Size = px(10, 10),
-            AutoButtonColor = false, BackgroundColor3 = T.borderDark,
-            BorderSizePixel = 0, Active = true })
-        local checkSurface = frame(check, 1, 1, 8, 8, T.fieldTop, "CheckSurface")
-        gradient(checkSurface, T.fieldTop, T.field)
-        local checkFill = frame(check, 1, 1, 8, 8, C.accent_secondary, "CheckFill")
-        gradient(checkFill, C.accent_secondary, C.accent)
-        checkFill.BackgroundTransparency = S[key] and 0 or 1
+        local check, checkFill = toggle_surface(r, key, S[key])
         local hit = new("TextButton", r, { Name = "Hit", Text = text, Position = px(14, 1),
             Size = UDim2.new(1, -14, 0, 14), BackgroundTransparency = 1, BorderSizePixel = 0,
             Font = Enum.Font.Arial, TextColor3 = S[key] and T.text or T.dim, TextSize = 13,
@@ -1805,6 +1882,7 @@ end
 conn(search:GetPropertyChangedSignal("Text"), refresh_configs)
 local function action_button(text, x, y, w, action)
     local b = button(config, text, x, y, w, 16, true)
+    b.Name = "Config" .. text:gsub("%W", "")
     conn(b.MouseButton1Click, function()
         local ok, message = action()
         status = ok and (message or (text .. " complete")) or tostring(message)
@@ -1962,6 +2040,8 @@ function Menu:SetTarget(data) self.Api:SetTarget(data) end
 function Menu:ClearTarget() self.Api:ClearTarget() end
 function Menu:NotifyHit(data) return self.Api:NotifyHit(data) end
 function Menu:SetPlayerListVisible(value) return self.Api:Set("show_playerlist", value == true) end
+function Menu:SetConfigVisible(value) return self.Api:Set("show_configs", value == true) end
+function Menu:ToggleConfigs() return self.Api:Set("show_configs", not self.State.show_configs) end
 function Menu:SaveConfig(name) return self.Api:SaveConfig(name) end
 function Menu:LoadConfig(name)
     local ok, err = self.Api:LoadConfig(name)
@@ -1980,6 +2060,9 @@ local function queue_page_refresh()
 end
 
 conn(Api.Changed.Event, function(key)
+    local colorKey = key:match("^color:(.+)$") or key:match("^color_alpha:(.+)$")
+        or key:match("^color_option:(.+)$")
+    if colorKey then refresh_color_swatches(colorKey) end
     if key == "active_tab" and S.active_tab ~= activeTab and schemas[S.active_tab]
         and Menu.RequestedTab ~= S.active_tab then
         activeTab = S.active_tab
