@@ -174,6 +174,7 @@ function API.new(options)
     self.Colors = copy(colorDefaults)
     self.ColorAlpha = copy(colorAlphaDefaults)
     self.ColorOptions = copy(colorOptionsDefaults)
+    self.ColorDefaults = copy(colorDefaults)
     self.Target = { active = false, name = "", part = "", health = 0, maxHealth = 0, distance = -1, userId = 0 }
     self.Changed = Instance.new("BindableEvent")
     self.TargetChanged = Instance.new("BindableEvent")
@@ -183,6 +184,13 @@ function API.new(options)
     self.LastHitNotificationId = 0
     self.LoadedConfig = nil
     self.Destroyed = false
+    if options.colors ~= nil then
+        local ok, colorError = self:RegisterColors(options.colors)
+        if not ok then
+            self:Destroy()
+            return nil, colorError
+        end
+    end
     return self
 end
 
@@ -291,9 +299,58 @@ function API:GetColorOptions(key)
     return self.ColorOptions[key]
 end
 
+function API:RegisterColor(key, value, alpha, options)
+    if self.Destroyed then return false, "API destroyed" end
+    if not valid_key(key) or typeof(value) ~= "Color3" then return false, "invalid color" end
+    if self.ColorDefaults[key] ~= nil then return false, "color already registered: " .. key end
+    alpha = tonumber(alpha) or 1
+    if not finite_number(alpha) then return false, "invalid color alpha" end
+    options = type(options) == "table" and options or {}
+    local mode = options.mode or "Solid"
+    if mode ~= "Solid" and mode ~= "Horizontal" and mode ~= "Vertical" and mode ~= "Radial" then
+        return false, "invalid color mode"
+    end
+    self.ColorDefaults[key] = value
+    self.Colors[key] = value
+    self.ColorAlpha[key] = math.clamp(alpha, 0, 1)
+    self.ColorOptions[key] = {
+        mode = mode,
+        angle = math.clamp(tonumber(options.angle) or 0, 0, 360),
+        midpoint = math.clamp(tonumber(options.midpoint) or 0.5, 0.05, 0.95),
+        speed = math.clamp(tonumber(options.speed) or 0, -100, 100),
+    }
+    local secondary = options.secondary
+    local secondaryKey = key .. "_secondary"
+    if self.ColorDefaults[secondaryKey] == nil then
+        secondary = typeof(secondary) == "Color3" and secondary or value
+        self.ColorDefaults[secondaryKey] = secondary
+        self.Colors[secondaryKey] = secondary
+        self.ColorAlpha[secondaryKey] = math.clamp(tonumber(options.secondaryAlpha) or alpha, 0, 1)
+    end
+    self.Changed:Fire("color:" .. key, value)
+    return true
+end
+
+function API:RegisterColors(values)
+    if self.Destroyed then return false, "API destroyed" end
+    if type(values) ~= "table" then return false, "expected a color table" end
+    for key, entry in pairs(values) do
+        local value = entry
+        local alpha, options
+        if type(entry) == "table" then
+            value, alpha, options = entry.color or entry[1], entry.alpha, entry.options
+        end
+        if self.ColorDefaults[key] == nil then
+            local ok, err = self:RegisterColor(key, value, alpha, options)
+            if not ok then return false, err end
+        end
+    end
+    return true
+end
+
 function API:SetColor(key, value)
     if self.Destroyed then return false, "API destroyed" end
-    if colorDefaults[key] == nil or typeof(value) ~= "Color3" then return false end
+    if self.ColorDefaults[key] == nil or typeof(value) ~= "Color3" then return false end
     self.Colors[key] = value
     self.Changed:Fire("color:" .. key, value)
     return true
@@ -302,7 +359,7 @@ end
 function API:SetColorAlpha(key, value)
     if self.Destroyed then return false, "API destroyed" end
     value = tonumber(value)
-    if colorAlphaDefaults[key] == nil or not finite_number(value) then return false end
+    if self.ColorAlpha[key] == nil or not finite_number(value) then return false end
     value = math.clamp(value, 0, 1)
     self.ColorAlpha[key] = value
     self.Changed:Fire("color_alpha:" .. key, value)
@@ -483,7 +540,7 @@ function API:LoadConfig(name)
         if self:Has(key) and type(value) == type(self.Defaults[key]) then self:Set(key, value) end
     end
     for key, rgb in pairs(type(data.colors) == "table" and data.colors or {}) do
-        if colorDefaults[key] and type(rgb) == "table" then
+        if self.ColorDefaults[key] and type(rgb) == "table" then
             local r, g, b = tonumber(rgb[1]), tonumber(rgb[2]), tonumber(rgb[3])
             if finite_number(r) and finite_number(g) and finite_number(b) then
                 self:SetColor(key, Color3.fromRGB(math.clamp(r, 0, 255), math.clamp(g, 0, 255), math.clamp(b, 0, 255)))
@@ -491,7 +548,7 @@ function API:LoadConfig(name)
         end
     end
     for key, alpha in pairs(type(data.colorAlpha) == "table" and data.colorAlpha or {}) do
-        if colorAlphaDefaults[key] ~= nil then self:SetColorAlpha(key, alpha) end
+        if self.ColorAlpha[key] ~= nil then self:SetColorAlpha(key, alpha) end
     end
     for key, options in pairs(type(data.colorOptions) == "table" and data.colorOptions or {}) do
         if colorOptionsDefaults[key] and type(options) == "table" then
@@ -535,7 +592,7 @@ end
 function API:Reset()
     if self.Destroyed then return false, "API destroyed" end
     for key, value in pairs(self.Defaults) do self:Set(key, value) end
-    for key, color in pairs(colorDefaults) do self:SetColor(key, color) end
+    for key, color in pairs(self.ColorDefaults) do self:SetColor(key, color) end
     for key, value in pairs(colorAlphaDefaults) do self:SetColorAlpha(key, value) end
     for key, options in pairs(colorOptionsDefaults) do
         for option, value in pairs(options) do self:SetColorOption(key, option, value) end
