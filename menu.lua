@@ -1,5 +1,3 @@
--- Sense overlay port for Roblox. Set getgenv().SenseMenuBaseUrl before loading
--- from GitHub; e.g. https://raw.githubusercontent.com/USER/REPO/main
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
